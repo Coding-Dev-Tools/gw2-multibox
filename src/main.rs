@@ -27,6 +27,7 @@ enum Mode {
     DryRun,
     ListWindows,
     Ui,
+    Init,
     Help,
     Version,
 }
@@ -51,6 +52,7 @@ fn parse_args() -> Result<Args> {
             "--dry-run" => mode = Mode::DryRun,
             "--list-windows" => mode = Mode::ListWindows,
             "--ui" => mode = Mode::Ui,
+            "init" => mode = Mode::Init,
             "--debug" => debug = true,
             "--ui-port" => {
                 // Handled below
@@ -60,25 +62,37 @@ fn parse_args() -> Result<Args> {
     }
 
     if let Some(i) = raw.iter().position(|a| a == "--ui-port") {
-        let v = raw.get(i + 1)
+        let v = raw
+            .get(i + 1)
             .ok_or_else(|| anyhow::anyhow!("--ui-port requires a value"))?;
-        ui_port = v.parse().map_err(|_| anyhow::anyhow!("Invalid port: {}", v))?;
+        ui_port = v
+            .parse()
+            .map_err(|_| anyhow::anyhow!("Invalid port: {}", v))?;
     }
 
     let config_path = raw
         .iter()
         .position(|a| a == "--config" || a == "-c")
         .and_then(|i| raw.get(i + 1))
-        .map(|s| PathBuf::from(s))
+        .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("config.yaml"));
 
-    Ok(Args { config_path, mode, ui_port, debug })
+    Ok(Args {
+        config_path,
+        mode,
+        ui_port,
+        debug,
+    })
 }
 
 fn print_help() {
-    println!("multisbox v{} — multiboxing launcher and window manager\n", VERSION);
+    println!(
+        "multisbox v{} — multiboxing launcher and window manager\n",
+        VERSION
+    );
     println!("USAGE:");
-    println!("    multisbox [OPTIONS]\n");
+    println!("    multisbox [OPTIONS]");
+    println!("    multisbox init [-c PATH]\n");
     println!("OPTIONS:");
     println!("    -c, --config <PATH>    Config YAML file [default: config.yaml]");
     println!("        --dry-run          Validate config and print launch plan, then exit");
@@ -89,11 +103,23 @@ fn print_help() {
     println!("    -h, --help             Print this help");
     println!("    -v, --version          Print version");
     println!();
+    println!("SUBCOMMANDS:");
+    println!("    init            Write a starter config to PATH (or config.yaml) and exit");
+    println!();
     println!("MODES:");
-    println!("    (default)    Launch instances from config, position windows, register F1-FN hotkeys");
+    println!(
+        "    (default)    Launch instances from config, position windows, register F1-FN hotkeys"
+    );
     println!("    --dry-run    Validate config, print what would happen, exit");
     println!("    --list-windows  Print all visible top-level windows (debug aid)");
     println!("    --ui         Serve the config editor on http://127.0.0.1:7878 (no launching)");
+    println!();
+    println!("EXAMPLES:");
+    println!("    multisbox init");
+    println!("    multisbox init -c my-team.yaml");
+    println!("    multisbox -c my-team.yaml --dry-run");
+    println!("    multisbox --ui --ui-port 9000");
+    println!("    multisbox -c my-team.yaml");
 }
 
 fn run_list_windows() -> Result<()> {
@@ -103,7 +129,7 @@ fn run_list_windows() -> Result<()> {
         println!("(no visible windows found)");
         return Ok(());
     }
-    println!("{:<10} {:<10} {}", "HWND", "PID", "TITLE");
+    println!("{:<10} {:<10} TITLE", "HWND", "PID");
     println!("{}", "-".repeat(70));
     for w in &windows {
         println!("{:<10x} {:<10} {}", w.hwnd as usize, w.pid, w.title);
@@ -138,6 +164,11 @@ fn print_launch_plan(config: &Config, resolved: &config::ResolvedConfig) {
     println!("\n=== Launch Plan ===");
     println!("Team: {}", config.team.name);
     println!(
+        "Layout: {} ({} regions)",
+        config.layout.name,
+        config.layout.regions.len()
+    );
+    println!(
         "Stagger: {}ms, Window timeout: {}ms",
         config.default_stagger_ms(),
         config.default_timeout_ms()
@@ -162,6 +193,29 @@ fn print_launch_plan(config: &Config, resolved: &config::ResolvedConfig) {
     }
 }
 
+fn run_init(config_path: &PathBuf) -> Result<()> {
+    if config_path.exists() {
+        eprintln!(
+            "Refusing to overwrite existing file: {:?}\n\
+             Use a different path with -c, or delete the file first.",
+            config_path
+        );
+        std::process::exit(2);
+    }
+    let cfg = Config::template();
+    cfg.save(config_path)?;
+    println!("Wrote starter config to {:?}", config_path);
+    println!();
+    println!("Next steps:");
+    println!("  1. Edit the file and set your game path under game_profiles[0].exe_path");
+    println!(
+        "  2. Run `multisbox -c {:?} --dry-run` to validate",
+        config_path
+    );
+    println!("  3. Run `multisbox -c {:?}` to launch", config_path);
+    Ok(())
+}
+
 fn run_ui(config_path: PathBuf, port: u16) -> Result<()> {
     println!("=== Multisbox Config UI ===");
     println!("Config: {:?}", config_path);
@@ -175,7 +229,7 @@ fn run_ui(config_path: PathBuf, port: u16) -> Result<()> {
     #[cfg(windows)]
     {
         let _ = std::process::Command::new("cmd")
-            .args(&["/C", "start", "", &url])
+            .args(["/C", "start", "", &url])
             .spawn();
     }
     println!("Open {} in your browser. Ctrl+C to exit.", url);
@@ -187,7 +241,11 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
     log::info(&format!("Loaded config from {:?}", config_path));
     println!("=== Multisbox Launcher ===");
     println!("Config: {:?}", config_path);
-    println!("Team: {} ({} slots)", config.team.name, config.team.slots.len());
+    println!(
+        "Team: {} ({} slots)",
+        config.team.name,
+        config.team.slots.len()
+    );
 
     let resolved = config::resolve(&config)?;
     log::info("Config validated");
@@ -207,11 +265,15 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
         let profile = resolved.slot_to_profile[&slot.index];
         println!(
             "Launching slot {} (account: {}, profile: {})...",
-            i + 1, slot.account, profile.name
+            i + 1,
+            slot.account,
+            profile.name
         );
         log::info(&format!(
             "Launching slot {} (account={}, profile={})",
-            i + 1, slot.account, profile.name
+            i + 1,
+            slot.account,
+            profile.name
         ));
         let pid = launcher::launch(profile, account.extra_args.as_ref())?;
         log::info(&format!("Slot {} PID = {}", i + 1, pid));
@@ -232,15 +294,25 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
         for _ in 0..poll_iterations {
             if let Some(w) = window::find_primary_by_pid(pid) {
                 windows.push(w.hwnd);
-                window::apply_region(w.hwnd, region);
+                unsafe {
+                    window::apply_region(w.hwnd, region);
+                }
                 println!(
                     "Slot {} ({}) -> {} ({},{} {}x{}) [pid {}]",
-                    i + 1, slot.account, region.name,
-                    region.x, region.y, region.width, region.height, pid
+                    i + 1,
+                    slot.account,
+                    region.name,
+                    region.x,
+                    region.y,
+                    region.width,
+                    region.height,
+                    pid
                 );
                 log::info(&format!(
                     "Slot {} positioned at {} (hwnd {:x})",
-                    i + 1, region.name, w.hwnd as usize
+                    i + 1,
+                    region.name,
+                    w.hwnd as usize
                 ));
                 found = true;
                 break;
@@ -250,39 +322,53 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
         if !found {
             eprintln!(
                 "WARNING: Could not find window for slot {} (PID {}) within {}ms",
-                i + 1, pid, timeout
+                i + 1,
+                pid,
+                timeout
             );
             log::warn(&format!(
                 "Slot {} (PID {}) window not found within {}ms",
-                i + 1, pid, timeout
+                i + 1,
+                pid,
+                timeout
             ));
             windows.push(std::ptr::null_mut());
         }
     }
 
     // Activate first slot
-    if let Some(&hwnd) = windows.first() {
-        if !hwnd.is_null() {
+    if let Some(&hwnd) = windows.first()
+        && !hwnd.is_null()
+    {
+        unsafe {
             window::activate(hwnd);
-            println!("Activated slot 1.");
-            log::info("Activated slot 1");
         }
+        println!("Activated slot 1.");
+        log::info("Activated slot 1");
     }
 
     // Register hotkeys
     let slot_count = config.team.slots.len();
     let mut hkm = hotkey::HotkeyManager::new();
     hkm.register(slot_count)?;
-    println!("\nHotkeys registered: F1..F{} to switch windows.", slot_count);
+    println!(
+        "\nHotkeys registered: F1..F{} to switch windows.",
+        slot_count
+    );
     println!("Press Ctrl+C to exit.\n");
-    log::info(&format!("Registered {} hotkeys (F1..F{})", slot_count, slot_count));
+    log::info(&format!(
+        "Registered {} hotkeys (F1..F{})",
+        slot_count, slot_count
+    ));
 
     // Message loop
     hotkey::run_loop(slot_count, |idx| {
         if idx < windows.len() {
             let hwnd = windows[idx];
             if !hwnd.is_null() {
-                window::activate(hwnd);
+                unsafe {
+                    window::activate(hwnd);
+                }
                 println!("Switched to slot {}.", idx + 1);
                 log::info(&format!("Switched to slot {}", idx + 1));
             }
@@ -317,6 +403,7 @@ fn main() -> Result<()> {
         Mode::DryRun => run_dry_run(&args.config_path),
         Mode::ListWindows => run_list_windows(),
         Mode::Ui => run_ui(args.config_path, args.ui_port),
+        Mode::Init => run_init(&args.config_path),
         Mode::Help | Mode::Version => Ok(()), // handled above
     }
 }

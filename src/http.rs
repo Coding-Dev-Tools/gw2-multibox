@@ -103,10 +103,7 @@ fn handle_client(
             respond_json(&mut stream, 200, &body)?;
         }
         ("GET", "/api/status") => {
-            let body = format!(
-                r#"{{"ok":true,"version":"{}"}}"#,
-                env!("CARGO_PKG_VERSION")
-            );
+            let body = format!(r#"{{"ok":true,"version":"{}"}}"#, env!("CARGO_PKG_VERSION"));
             respond_json(&mut stream, 200, &body)?;
         }
         ("POST", "/api/config") => {
@@ -158,7 +155,11 @@ fn respond(stream: &mut TcpStream, code: u16, content_type: &str, body: &str) ->
     };
     let response = format!(
         "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n{}",
-        code, status, content_type, body.len(), body
+        code,
+        status,
+        content_type,
+        body.len(),
+        body
     );
     stream.write_all(response.as_bytes())?;
     stream.flush()?;

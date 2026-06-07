@@ -1,0 +1,36 @@
+name: Config help
+description: Get help writing or debugging a YAML config
+title: '[Config]: '
+labels: ['question']
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template if you have a question about how to write a config
+        or your config is doing something unexpected. For bugs, use the
+        "Bug report" template instead.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: What are you trying to do?
+      placeholder: I want to launch 4 GW2 instances in a 2x2 grid across two monitors.
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Your current config (redact account names)
+      render: yaml
+    validations:
+      required: false
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What have you tried so far?
+    validations:
+      required: false

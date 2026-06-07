@@ -47,7 +47,8 @@ pub fn launch(profile: &GameProfile, extra_args: Option<&Vec<String>>) -> Result
         if ok == 0 {
             return Err(anyhow::anyhow!(
                 "CreateProcessW failed for '{}' (error {})",
-                full_cmd, std::io::Error::last_os_error()
+                full_cmd,
+                std::io::Error::last_os_error()
             ));
         }
         let _ = WaitForSingleObject(pi.hProcess, 500);

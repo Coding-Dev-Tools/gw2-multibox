@@ -85,15 +85,12 @@ fn write(level: Level, msg: &str) {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let line = format!(
-        "[{}] [{}] {}\n",
-        now, level.as_str(), msg
-    );
-    if let Ok(mut guard) = LOG_FILE.lock() {
-        if let Some(f) = guard.as_mut() {
-            let _ = f.write_all(line.as_bytes());
-            let _ = f.flush();
-        }
+    let line = format!("[{}] [{}] {}\n", now, level.as_str(), msg);
+    if let Ok(mut guard) = LOG_FILE.lock()
+        && let Some(f) = guard.as_mut()
+    {
+        let _ = f.write_all(line.as_bytes());
+        let _ = f.flush();
     }
     // Also print to stderr for console mode
     if level >= Level::Warn {

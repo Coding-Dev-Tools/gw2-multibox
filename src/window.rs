@@ -37,7 +37,10 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> B
 pub fn list_all_visible() -> Vec<WindowInfo> {
     let mut results: Vec<WindowInfo> = Vec::new();
     unsafe {
-        EnumWindows(Some(enum_windows_callback), &mut results as *mut _ as LPARAM);
+        EnumWindows(
+            Some(enum_windows_callback),
+            &mut results as *mut _ as LPARAM,
+        );
     }
     results
 }
@@ -53,7 +56,12 @@ pub fn find_primary_by_pid(target_pid: DWORD) -> Option<WindowInfo> {
     find_by_pid(target_pid).into_iter().next()
 }
 
-pub fn apply_region(hwnd: HWND, region: &Region) {
+/// Position a window at the given region.
+///
+/// # Safety
+///
+/// Caller must ensure `hwnd` is a valid window handle.
+pub unsafe fn apply_region(hwnd: HWND, region: &Region) {
     unsafe {
         SetWindowPos(
             hwnd,
@@ -67,7 +75,12 @@ pub fn apply_region(hwnd: HWND, region: &Region) {
     }
 }
 
-pub fn activate(hwnd: HWND) {
+/// Bring a window to the foreground.
+///
+/// # Safety
+///
+/// Caller must ensure `hwnd` is a valid window handle.
+pub unsafe fn activate(hwnd: HWND) {
     unsafe {
         SetForegroundWindow(hwnd);
     }

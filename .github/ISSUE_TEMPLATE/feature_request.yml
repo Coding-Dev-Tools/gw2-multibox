@@ -1,0 +1,44 @@
+name: Feature request
+description: Suggest a new feature
+title: '[Feature]: '
+labels: ['enhancement']
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature! Please describe the problem and the
+        solution you'd like to see.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      placeholder: I always have to manually...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Describe your proposed solution
+      placeholder: Add a new field `auto_restart_on_exit: true` to the team config...
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      placeholder: I could write a script to do this manually, but...
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Game name, account count, monitor layout, screenshots, etc.
+    validations:
+      required: false

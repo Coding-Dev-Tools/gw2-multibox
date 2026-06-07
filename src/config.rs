@@ -76,6 +76,47 @@ pub struct Config {
 }
 
 impl Config {
+    /// Returns a starter config with one profile, one account, one region,
+    /// and one slot. Safe to write and edit.
+    pub fn template() -> Self {
+        Config {
+            game_profiles: vec![GameProfile {
+                name: "my-game".to_string(),
+                exe_path: r"C:\Games\MyGame\game.exe".to_string(),
+                args: vec![],
+                working_dir: None,
+                window_ready_delay_ms: None,
+            }],
+            accounts: vec![Account {
+                name: "account-1".to_string(),
+                game_profile: "my-game".to_string(),
+                extra_args: None,
+            }],
+            layout: Layout {
+                name: "single-monitor".to_string(),
+                regions: vec![Region {
+                    name: "fullscreen".to_string(),
+                    x: 0,
+                    y: 0,
+                    width: 1920,
+                    height: 1080,
+                }],
+            },
+            team: Team {
+                name: "default".to_string(),
+                slots: vec![Slot {
+                    index: 1,
+                    account: "account-1".to_string(),
+                    region: "fullscreen".to_string(),
+                }],
+                options: TeamOptions {
+                    stagger_delay_ms: Some(3000),
+                    window_timeout_ms: Some(60000),
+                },
+            },
+        }
+    }
+
     pub fn load(path: &Path) -> Result<Self> {
         let s = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config {:?}", path))?;
@@ -132,7 +173,9 @@ pub fn resolve(config: &Config) -> Result<ResolvedConfig<'_>> {
         if r.width <= 0 || r.height <= 0 {
             return Err(anyhow::anyhow!(
                 "Region '{}' has non-positive size ({}x{})",
-                r.name, r.width, r.height
+                r.name,
+                r.width,
+                r.height
             ));
         }
         if regions.insert(r.name.as_str(), r).is_some() {
@@ -151,21 +194,24 @@ pub fn resolve(config: &Config) -> Result<ResolvedConfig<'_>> {
         let account = accounts.get(slot.account.as_str()).ok_or_else(|| {
             anyhow::anyhow!(
                 "Slot {} references unknown account '{}'",
-                slot.index, slot.account
+                slot.index,
+                slot.account
             )
         })?;
 
         let profile = profiles.get(account.game_profile.as_str()).ok_or_else(|| {
             anyhow::anyhow!(
                 "Account '{}' references unknown game profile '{}'",
-                account.name, account.game_profile
+                account.name,
+                account.game_profile
             )
         })?;
 
         let region = regions.get(slot.region.as_str()).ok_or_else(|| {
             anyhow::anyhow!(
                 "Slot {} references unknown region '{}'",
-                slot.index, slot.region
+                slot.index,
+                slot.region
             )
         })?;
 
@@ -217,7 +263,10 @@ mod tests {
                 name: "default".to_string(),
                 regions: vec![Region {
                     name: "main".to_string(),
-                    x: 0, y: 0, width: 1920, height: 1080,
+                    x: 0,
+                    y: 0,
+                    width: 1920,
+                    height: 1080,
                 }],
             },
             team: Team {
@@ -309,5 +358,62 @@ mod tests {
         };
         assert_eq!(cfg.default_stagger_ms(), 1500);
         assert_eq!(cfg.default_timeout_ms(), 20000);
+    }
+
+    #[test]
+    fn template_resolves() {
+        let cfg = Config::template();
+        let r = resolve(&cfg).expect("template should resolve");
+        assert_eq!(r.accounts.len(), 1);
+        assert_eq!(r.profiles.len(), 1);
+        assert_eq!(r.regions.len(), 1);
+        assert_eq!(r.slot_to_profile.len(), 1);
+        assert_eq!(r.slot_to_region.len(), 1);
+        assert_eq!(cfg.default_stagger_ms(), 3000);
+        assert_eq!(cfg.default_timeout_ms(), 60000);
+    }
+
+    #[test]
+    fn template_roundtrips_yaml() {
+        let cfg = Config::template();
+        let s = serde_yaml::to_string(&cfg).expect("serialize");
+        let back: Config = serde_yaml::from_str(&s).expect("deserialize");
+        assert_eq!(back.game_profiles.len(), 1);
+        assert_eq!(back.accounts[0].name, "account-1");
+        assert_eq!(back.layout.name, "single-monitor");
+        assert_eq!(back.team.slots[0].index, 1);
+    }
+
+    #[test]
+    fn save_load_roundtrip() {
+        let cfg = Config::template();
+        let dir = std::env::temp_dir().join("multisbox_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("roundtrip.yaml");
+        cfg.save(&path).expect("save");
+        let back = Config::load(&path).expect("load");
+        assert_eq!(back.accounts.len(), 1);
+        assert_eq!(back.layout.regions[0].width, 1920);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn resolve_negative_height_fails() {
+        let mut cfg = minimal_config();
+        cfg.layout.regions[0].height = -100;
+        assert!(resolve(&cfg).is_err());
+    }
+
+    #[test]
+    fn resolve_duplicate_profile_fails() {
+        let mut cfg = minimal_config();
+        cfg.game_profiles.push(GameProfile {
+            name: "test".to_string(),
+            exe_path: "C:/other.exe".to_string(),
+            args: vec![],
+            working_dir: None,
+            window_ready_delay_ms: None,
+        });
+        assert!(resolve(&cfg).is_err());
     }
 }

@@ -21,12 +21,8 @@ impl HotkeyManager {
     pub fn register(&mut self, slot_count: usize) -> Result<()> {
         for i in 0..slot_count {
             unsafe {
-                let result = RegisterHotKey(
-                    0 as HWND,
-                    HOTKEY_BASE_ID + i as i32,
-                    0,
-                    VK_F1 + i as UINT,
-                );
+                let result =
+                    RegisterHotKey(0 as HWND, HOTKEY_BASE_ID + i as i32, 0, VK_F1 + i as UINT);
                 if result == 0 {
                     eprintln!(
                         "Warning: Failed to register F{} hotkey (error {})",
@@ -46,6 +42,12 @@ impl HotkeyManager {
                 UnregisterHotKey(0 as HWND, HOTKEY_BASE_ID + i as i32);
             }
         }
+    }
+}
+
+impl Default for HotkeyManager {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

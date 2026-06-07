@@ -7,6 +7,10 @@ you switch between them with hotkeys.
 > Compatible with ISBoxer/Inner Space — use whichever tool you prefer per
 > session.
 
+[![CI](https://github.com/Coding-Dev-Tools/gw2-multibox/actions/workflows/rust.yml/badge.svg)](https://github.com/Coding-Dev-Tools/gw2-multibox/actions/workflows/rust.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Rust 1.85+](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org)
+
 ## Features
 
 - ✅ YAML config for game profiles, accounts, layout, and team
@@ -18,7 +22,8 @@ you switch between them with hotkeys.
 - ✅ File-based structured logging
 - ✅ Validation mode (`--dry-run`) catches errors before launch
 - ✅ Window enumeration (`--list-windows`) for debugging
-- ✅ Unit tests for config parsing and validation
+- ✅ 16 unit tests for config parsing and validation
+- ✅ Single-file binary — no installer, no runtime dependencies
 
 ## Not in this release
 
@@ -29,32 +34,61 @@ you switch between them with hotkeys.
 - ❌ Windows installer (Phase 2)
 - ❌ Auto-update (Phase 2)
 
-## Build
+## Download
+
+Grab the latest prebuilt binary from the
+[Releases](https://github.com/Coding-Dev-Tools/gw2-multibox/releases) page.
+Unzip anywhere and run — no installation required.
+
+## Build from source
+
+Requires Rust 1.85 or newer and the MSVC toolchain.
 
 ```bash
+git clone https://github.com/Coding-Dev-Tools/gw2-multibox.git
+cd gw2-multibox
 cargo build --release
 ```
 
-Output: `target/release/multisbox.exe` (single file, no installer required)
+Output: `target/release/gw2-multibox.exe` (single file, no installer required).
+
+## Quick start
+
+```bash
+# 1. Generate a starter config
+multisbox init
+
+# 2. Edit config.yaml — set your game path and accounts
+notepad config.yaml
+
+# 3. Validate the config without launching
+multisbox --dry-run
+
+# 4. Launch for real
+multisbox
+```
+
+The default config targets a single instance in a 1920×1080 region. See
+`examples/` for multi-account setups with Guild Wars 2, World of Warcraft,
+and Final Fantasy XIV.
 
 ## Usage
 
 ```bash
-# Run with default config
-multisbox
+multisbox [OPTIONS] [SUBCOMMAND]
 
-# Run with specific config
-multisbox --config my-team.yaml
+Options:
+  -c, --config <PATH>    Config YAML file [default: config.yaml]
+      --dry-run          Validate config and print launch plan, then exit
+      --list-windows     Enumerate all visible top-level windows, then exit
+      --ui               Start the web config UI on http://127.0.0.1:7878
+      --ui-port <PORT>   Override UI port [default: 7878]
+      --debug            Enable debug logging
+  -h, --help             Print help
+  -v, --version          Print version
 
-# Validate config without launching
-multisbox --dry-run
-
-# Enumerate visible windows (debug)
-multisbox --list-windows
-
-# Start the web config editor
-multisbox --ui
-# Then open http://127.0.0.1:7878
+Subcommands:
+  init            Write a starter config and exit
 ```
 
 See `docs/user-guide.md` for the full guide.
@@ -75,6 +109,7 @@ The `examples/` directory contains ready-to-use configs:
 - `docs/user-guide.md` — for end users
 - `docs/config-reference.md` — full YAML field reference
 - `docs/architecture.md` — for contributors
+- [CONTRIBUTING.md](CONTRIBUTING.md) — how to contribute
 
 ## Project structure
 
@@ -92,6 +127,7 @@ gw2-multibox/
 │   └── ui/static/          embedded web UI assets
 ├── examples/               sample configs for several games
 ├── docs/                   user guide, config reference, architecture
+├── .github/                CI workflows, issue templates
 ├── Cargo.toml
 ├── config.yaml             default 4-account GW2 setup
 └── config-test.yaml        notepad test rig
@@ -121,4 +157,4 @@ Zero telemetry. Zero network calls. The HTTP server is bound to
 
 ## License
 
-TBD
+[MIT](LICENSE)
