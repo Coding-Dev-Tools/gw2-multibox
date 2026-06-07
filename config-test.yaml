@@ -1,0 +1,31 @@
+# Test config: launches notepad windows for layout testing (no real GW2)
+game_profiles:
+  - name: test
+    exe_path: "C:/Windows/System32/notepad.exe"
+    args: []
+    working_dir: "C:/Windows/System32"
+
+accounts:
+  - { name: n1, game_profile: test }
+  - { name: n2, game_profile: test }
+  - { name: n3, game_profile: test }
+  - { name: n4, game_profile: test }
+
+layout:
+  name: four-stack-test
+  regions:
+    - { name: main, x: 0, y: 0, width: 800, height: 600 }
+    - { name: s2, x: 800, y: 0, width: 400, height: 300 }
+    - { name: s3, x: 800, y: 300, width: 400, height: 300 }
+    - { name: s4, x: 0, y: 600, width: 400, height: 300 }
+
+team:
+  name: notepad-test
+  slots:
+    - { index: 1, account: n1, region: main }
+    - { index: 2, account: n2, region: s2 }
+    - { index: 3, account: n3, region: s3 }
+    - { index: 4, account: n4, region: s4 }
+  options:
+    stagger_delay_ms: 1000
+    window_timeout_ms: 5000

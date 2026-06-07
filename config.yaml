@@ -1,0 +1,32 @@
+game_profiles:
+  - name: gw2
+    exe_path: "C:/Games/Guild Wars 2/Gw2-64.exe"
+    args:
+      - "-shareArchive"
+    working_dir: "C:/Games/Guild Wars 2"
+
+accounts:
+  - { name: acc1, game_profile: gw2 }
+  - { name: acc2, game_profile: gw2 }
+  - { name: acc3, game_profile: gw2 }
+  - { name: acc4, game_profile: gw2 }
+
+layout:
+  name: four-stack
+  regions:
+    - { name: main, x: 0, y: 0, width: 1920, height: 1080 }
+    - { name: s2, x: 1920, y: 0, width: 960, height: 540 }
+    - { name: s3, x: 1920, y: 540, width: 960, height: 540 }
+    - { name: s4, x: 0, y: 1080, width: 960, height: 540 }
+
+team:
+  name: gw2-four
+  slots:
+    - { index: 1, account: acc1, region: main }
+    - { index: 2, account: acc2, region: s2 }
+    - { index: 3, account: acc3, region: s3 }
+    - { index: 4, account: acc4, region: s4 }
+  # Optional tuning — defaults shown
+  options:
+    stagger_delay_ms: 3000      # delay between launches
+    window_timeout_ms: 60000    # how long to wait for each window

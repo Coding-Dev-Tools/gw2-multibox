@@ -1,0 +1,28 @@
+# Example: Final Fantasy XIV 2-account setup
+# Same multisbox binary, different game, different team.
+
+game_profiles:
+  - name: ffxiv
+    exe_path: "C:/Program Files (x86)/SquareEnix/FINAL FANTASY XIV - A Realm Reborn/ffxiv.exe"
+    args: []
+    working_dir: "C:/Program Files (x86)/SquareEnix/FINAL FANTASY XIV - A Realm Reborn/"
+
+accounts:
+  - { name: main, game_profile: ffxiv }
+  - { name: alt, game_profile: ffxiv }
+
+# 2x1 vertical stack
+layout:
+  name: ffxiv-2-vertical
+  regions:
+    - { name: top, x: 0, y: 0, width: 1920, height: 1080 }
+    - { name: bottom, x: 0, y: 1080, width: 1920, height: 1080 }
+
+team:
+  name: ffxiv-duo
+  slots:
+    - { index: 1, account: main, region: top }
+    - { index: 2, account: alt, region: bottom }
+  options:
+    stagger_delay_ms: 5000
+    window_timeout_ms: 90000

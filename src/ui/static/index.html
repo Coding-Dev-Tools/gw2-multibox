@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Multisbox Config</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>Multisbox</h1>
+    <p class="tagline">Multiboxing launcher & window manager</p>
+  </header>
+
+  <nav>
+    <button class="tab-btn active" data-tab="team">Team</button>
+    <button class="tab-btn" data-tab="layout">Layout</button>
+    <button class="tab-btn" data-tab="profiles">Game Profiles</button>
+    <button class="tab-btn" data-tab="accounts">Accounts</button>
+    <button class="tab-btn" data-tab="raw">Raw JSON</button>
+  </nav>
+
+  <main>
+    <div id="status" class="status hidden"></div>
+
+    <section id="tab-team" class="tab active">
+      <h2>Team</h2>
+      <label>Name <input id="team-name" type="text"></label>
+      <h3>Slots</h3>
+      <div id="slots-list"></div>
+      <button id="add-slot">+ Add Slot</button>
+    </section>
+
+    <section id="tab-layout" class="tab">
+      <h2>Layout</h2>
+      <label>Name <input id="layout-name" type="text"></label>
+      <h3>Regions</h3>
+      <div id="regions-list"></div>
+      <button id="add-region">+ Add Region</button>
+      <div class="hint">
+        <p>Coordinates in pixels. Origin (0,0) is the top-left of the primary monitor.</p>
+        <p>Negative X/Y values are valid (place regions on secondary monitors).</p>
+      </div>
+    </section>
+
+    <section id="tab-profiles" class="tab">
+      <h2>Game Profiles</h2>
+      <p class="hint">Each profile is a game executable + launch args. Add multiple profiles for multi-game support.</p>
+      <div id="profiles-list"></div>
+      <button id="add-profile">+ Add Profile</button>
+    </section>
+
+    <section id="tab-accounts" class="tab">
+      <h2>Accounts</h2>
+      <p class="hint">Accounts tie a name to a game profile. Slots reference accounts, not profiles.</p>
+      <div id="accounts-list"></div>
+      <button id="add-account">+ Add Account</button>
+    </section>
+
+    <section id="tab-raw" class="tab">
+      <h2>Raw JSON</h2>
+      <p class="hint">Edit the full config as JSON. Saved with the others. Validation runs on save.</p>
+      <textarea id="raw-json" spellcheck="false"></textarea>
+    </section>
+  </main>
+
+  <footer>
+    <button id="save" class="primary">Save</button>
+    <button id="reload">Reload</button>
+    <span id="dirty-indicator" class="hidden">Unsaved changes</span>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>

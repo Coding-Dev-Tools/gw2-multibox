@@ -1,0 +1,36 @@
+# Example: World of Warcraft 3-account setup
+# Demonstrates multi-game support — GW2 and WoW configs can coexist in different
+# teams. To use this, run: multisbox --config config-wow.yaml
+
+game_profiles:
+  - name: wow-classic
+    exe_path: "C:/Program Files (x86)/World of Warcraft/_classic_/WowClassic.exe"
+    args: []
+    working_dir: "C:/Program Files (x86)/World of Warcraft/_classic_"
+  - name: wow-retail
+    exe_path: "C:/Program Files (x86)/World of Warcraft/World of Warcraft.exe"
+    args: []
+    working_dir: "C:/Program Files (x86)/World of Warcraft/"
+
+accounts:
+  - { name: warrior, game_profile: wow-classic }
+  - { name: priest, game_profile: wow-classic }
+  - { name: mage, game_profile: wow-classic }
+
+# 3-wide horizontal layout — 3 monitors or one ultrawide
+layout:
+  name: wow-three-horizontal
+  regions:
+    - { name: left, x: 0, y: 0, width: 1920, height: 1080 }
+    - { name: center, x: 1920, y: 0, width: 1920, height: 1080 }
+    - { name: right, x: 3840, y: 0, width: 1920, height: 1080 }
+
+team:
+  name: wow-classic-trio
+  slots:
+    - { index: 1, account: warrior, region: left }
+    - { index: 2, account: priest, region: center }
+    - { index: 3, account: mage, region: right }
+  options:
+    stagger_delay_ms: 4000
+    window_timeout_ms: 90000

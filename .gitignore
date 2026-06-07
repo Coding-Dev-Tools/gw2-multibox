@@ -1,0 +1,18 @@
+# Rust
+/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test artifacts (left over from manual testing)
+test_output.txt
+test_err.txt
