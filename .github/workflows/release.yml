@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build release binary
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (stable-msvc)
+        run: |
+          rustup toolchain install stable-x86_64-pc-windows-msvc
+          rustup default stable-x86_64-pc-windows-msvc
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-release-
+
+      - name: Build release
+        run: cargo build --release --verbose
+
+      - name: Strip and rename binary
+        shell: pwsh
+        run: |
+          $src = "target\release\gw2-multibox.exe"
+          $dst = "target\release\multisbox-${{ github.ref_name }}-x86_64-pc-windows-msvc.exe"
+          Move-Item -Path $src -Destination $dst
+          Write-Host "Built $dst"
+          Get-Item $dst | Select-Object Name, Length
+
+      - name: Generate SHA256 checksum
+        shell: pwsh
+        run: |
+          $dst = "target\release\multisbox-${{ github.ref_name }}-x86_64-pc-windows-msvc.exe"
+          $hash = (Get-FileHash $dst -Algorithm SHA256).Hash
+          "$dst  $hash" | Out-File -FilePath "target\release\SHA256SUMS.txt" -Encoding ascii
+          Get-Content "target\release\SHA256SUMS.txt"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            target/release/multisbox-${{ github.ref_name }}-x86_64-pc-windows-msvc.exe
+            target/release/SHA256SUMS.txt
