@@ -16,3 +16,22 @@ Thumbs.db
 # Test artifacts (left over from manual testing)
 test_output.txt
 test_err.txt
+
+# Merge artifacts and cache (added by workspace stabilization)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+*.orig
+*.BACKUP.*
+*.BASE.*
+*.LOCAL.*
+*.REMOTE.*
+local.db
+*.sqlite3
