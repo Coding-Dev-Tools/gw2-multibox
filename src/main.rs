@@ -11,7 +11,7 @@
 
 use anyhow::Result;
 use gw2_multibox::config::{self, Config};
-use gw2_multibox::{hotkey, http, launcher, log, window};
+use gw2_multibox::{broadcast, hotkey, http, launcher, log, mutex_kill, tray, window};
 use std::env;
 use std::path::PathBuf;
 use std::thread;
@@ -29,7 +29,9 @@ enum Mode {
     Ui,
     Init,
     Gw2Init,
-    CaptureLayout,
+    WowInit,
+    FfxivInit,
+    EveInit,
     Help,
     Version,
 }
@@ -56,6 +58,9 @@ fn parse_args() -> Result<Args> {
             "--ui" => mode = Mode::Ui,
             "init" => mode = Mode::Init,
             "gw2-init" => mode = Mode::Gw2Init,
+            "wow-init" => mode = Mode::WowInit,
+            "ffxiv-init" => mode = Mode::FfxivInit,
+            "eve-init" => mode = Mode::EveInit,
             "--debug" => debug = true,
             "--ui-port" => {
                 // Handled below
@@ -96,7 +101,10 @@ fn print_help() {
     println!("USAGE:");
     println!("    multisbox [OPTIONS]");
     println!("    multisbox init [-c PATH]");
-    println!("    multisbox gw2-init [-c PATH]\n");
+    println!("    multisbox gw2-init [-c PATH]");
+    println!("    multisbox wow-init [-c PATH]");
+    println!("    multisbox ffxiv-init [-c PATH]");
+    println!("    multisbox eve-init [-c PATH]\n");
     println!("OPTIONS:");
     println!("    -c, --config <PATH>    Config YAML file [default: config.yaml]");
     println!("        --dry-run          Validate config and print launch plan, then exit");
@@ -112,6 +120,15 @@ fn print_help() {
     println!(
         "    gw2-init     Write a GW2-optimized config (auto-detects install, 4 accounts, 2x2 grid)"
     );
+    println!(
+        "    wow-init     Write a WoW-optimized config (auto-detects install, 4 accounts, 2x2 grid)"
+    );
+    println!(
+        "    ffxiv-init   Write a FFXIV-optimized config (auto-detects install, 4 accounts, 2x2 grid)"
+    );
+    println!(
+        "    eve-init     Write an EVE-optimized config (auto-detects install, 4 accounts, 2x2 grid)"
+    );
     println!();
     println!("MODES:");
     println!(
@@ -123,6 +140,9 @@ fn print_help() {
     println!();
     println!("EXAMPLES:");
     println!("    multisbox gw2-init              # One-click GW2 setup");
+    println!("    multisbox wow-init              # One-click WoW setup");
+    println!("    multisbox ffxiv-init            # One-click FFXIV setup");
+    println!("    multisbox eve-init              # One-click EVE setup");
     println!("    multisbox gw2-init -c my.yaml   # Custom path");
     println!("    multisbox -c config.yaml --dry-run");
     println!("    multisbox --ui --ui-port 9000");
@@ -196,6 +216,9 @@ fn print_launch_plan(config: &Config, resolved: &config::ResolvedConfig) {
         if let Some(dir) = &profile.working_dir {
             println!("  Cwd:     {}", dir);
         }
+        if let Some(mutex_name) = &profile.kill_mutex {
+            println!("  Mutex:   {} (will kill)", mutex_name);
+        }
         println!();
     }
 }
@@ -260,6 +283,117 @@ fn run_gw2_init(config_path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
+fn run_wow_init(config_path: &PathBuf) -> Result<()> {
+    if config_path.exists() {
+        eprintln!(
+            "Refusing to overwrite existing file: {:?}\n\
+             Use a different path with -c, or delete the file first.",
+            config_path
+        );
+        std::process::exit(2);
+    }
+    let cfg = config::wow_template();
+    cfg.save(config_path)?;
+    println!("✓ WoW config written to {:?}", config_path);
+    println!();
+    println!("Auto-detected:");
+    println!("  Game path: {}", cfg.game_profiles[0].exe_path);
+    println!(
+        "  Layout:    {} ({} regions)",
+        cfg.layout.name,
+        cfg.layout.regions.len()
+    );
+    println!("  Accounts:  {}", cfg.accounts.len());
+    println!();
+    println!("Next steps:");
+    println!("  1. (Optional) Edit account names in config if different");
+    println!(
+        "  2. Run `multisbox -c {:?} --dry-run` to validate",
+        config_path
+    );
+    println!(
+        "  3. Run `multisbox -c {:?}` to launch 4 WoW windows",
+        config_path
+    );
+    println!();
+    println!("Hotkeys: F1=Account1, F2=Account2, F3=Account3, F4=Account4");
+    Ok(())
+}
+
+fn run_ffxiv_init(config_path: &PathBuf) -> Result<()> {
+    if config_path.exists() {
+        eprintln!(
+            "Refusing to overwrite existing file: {:?}\n\
+             Use a different path with -c, or delete the file first.",
+            config_path
+        );
+        std::process::exit(2);
+    }
+    let cfg = config::ffxiv_template();
+    cfg.save(config_path)?;
+    println!("✓ FFXIV config written to {:?}", config_path);
+    println!();
+    println!("Auto-detected:");
+    println!("  Game path: {}", cfg.game_profiles[0].exe_path);
+    println!(
+        "  Layout:    {} ({} regions)",
+        cfg.layout.name,
+        cfg.layout.regions.len()
+    );
+    println!("  Accounts:  {}", cfg.accounts.len());
+    println!();
+    println!("Next steps:");
+    println!("  1. (Optional) Edit account names in config if different");
+    println!(
+        "  2. Run `multisbox -c {:?} --dry-run` to validate",
+        config_path
+    );
+    println!(
+        "  3. Run `multisbox -c {:?}` to launch 4 FFXIV windows",
+        config_path
+    );
+    println!();
+    println!("Hotkeys: F1=Account1, F2=Account2, F3=Account3, F4=Account4");
+    Ok(())
+}
+
+fn run_eve_init(config_path: &PathBuf) -> Result<()> {
+    if config_path.exists() {
+        eprintln!(
+            "Refusing to overwrite existing file: {:?}\n\
+             Use a different path with -c, or delete the file first.",
+            config_path
+        );
+        std::process::exit(2);
+    }
+    let cfg = config::eve_template();
+    cfg.save(config_path)?;
+    println!("✓ EVE config written to {:?}", config_path);
+    println!();
+    println!("Auto-detected:");
+    println!("  Game path: {}", cfg.game_profiles[0].exe_path);
+    println!(
+        "  Layout:    {} ({} regions)",
+        cfg.layout.name,
+        cfg.layout.regions.len()
+    );
+    println!("  Accounts:  {}", cfg.accounts.len());
+    println!();
+    println!("Next steps:");
+    println!("  1. (Optional) Edit account names in config if different");
+    println!(
+        "  2. Run `multisbox -c {:?} --dry-run` to validate",
+        config_path
+    );
+    println!(
+        "  3. Run `multisbox -c {:?}` to launch 4 EVE windows",
+        config_path
+    );
+    println!();
+    println!("Hotkeys: F1=Account1, F2=Account2, F3=Account3, F4=Account4");
+    Ok(())
+}
+
 fn run_ui(config_path: PathBuf, port: u16) -> Result<()> {
     println!("=== Multisbox Config UI ===");
     println!("Config: {:?}", config_path);
@@ -302,48 +436,93 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
     let stagger = config.default_stagger_ms();
     let timeout = config.default_timeout_ms();
 
-    // Launch instances
-    let mut pids: Vec<DWORD> = Vec::new();
-    for (i, slot) in config.team.slots.iter().enumerate() {
-        let account = resolved.accounts.get(slot.account.as_str()).unwrap();
-        let profile = resolved.slot_to_profile[&slot.index];
+    // Pre-open Gw2.dat with FULL shared access for the entire run.
+    // This replicates GW2Launcher's FileManager_FileLocker pattern:
+    // the file is held open with FILE_SHARE_READ|WRITE|DELETE so that
+    // all GW2 instances we launch can open the same file.
+    // The handle is held in `_file_lock` for the entire function scope
+    // (dropped only when run_live returns).
+    let gw2_dat_path = "C:\\Program Files\\Guild Wars 2\\Gw2.dat";
+    let _file_lock = match gw2_multibox::file_lock::SharedFileLock::new(gw2_dat_path) {
+        Ok(lock) => {
+            log::info(&format!(
+                "Pre-opened {} with FILE_SHARE_READ|WRITE|DELETE — multiple instances can now share",
+                gw2_dat_path
+            ));
+            println!("Pre-opened Gw2.dat with shared access (FileLocker).");
+            Some(lock)
+        }
+        Err(e) => {
+            log::warn(&format!(
+                "Could not pre-open {}: {} — second instance may fail",
+                gw2_dat_path, e
+            ));
+            eprintln!("Warning: Could not pre-open Gw2.dat: {}", e);
+            None
+        }
+    };
+
+    // Check if we're in launcher mode (e.g. GW2Launcher.exe spawns game processes)
+    let first_profile = resolved.slot_to_profile[&config.team.slots[0].index];
+    let is_launcher_mode = first_profile.launcher_mode;
+    let slot_count = config.team.slots.len();
+
+    let mut windows: Vec<HWND> = Vec::new();
+
+    if is_launcher_mode {
+        // Launcher mode: launch the launcher once, then find game windows
+        // Position each window as it appears — don't block waiting for all.
+        let game_name = first_profile
+            .game_process_name
+            .as_deref()
+            .unwrap_or("Gw2-64");
+
         println!(
-            "Launching slot {} (account: {}, profile: {})...",
-            i + 1,
-            slot.account,
-            profile.name
+            "Launcher mode: launching {} — positioning windows as they appear...",
+            first_profile.exe_path
         );
         log::info(&format!(
-            "Launching slot {} (account={}, profile={})",
-            i + 1,
-            slot.account,
-            profile.name
+            "Launcher mode: exe={} game_process={} max_slots={}",
+            first_profile.exe_path, game_name, slot_count
         ));
-        let pid = launcher::launch(profile, account.extra_args.as_ref())?;
-        log::info(&format!("Slot {} PID = {}", i + 1, pid));
-        pids.push(pid);
-        if i < config.team.slots.len() - 1 {
-            thread::sleep(Duration::from_millis(stagger));
-        }
-    }
-    println!("All {} instances launched.", pids.len());
 
-    // Poll for windows
-    let mut windows: Vec<HWND> = Vec::new();
-    let poll_iterations = timeout / 100;
-    for (i, slot) in config.team.slots.iter().enumerate() {
-        let pid = pids[i];
-        let region = resolved.slot_to_region[&slot.index];
-        let mut found = false;
-        for _ in 0..poll_iterations {
-            if let Some(w) = window::find_primary_by_pid(pid) {
-                windows.push(w.hwnd);
-                unsafe {
-                    window::apply_region(w.hwnd, region);
+        match launcher::launch(first_profile, None) {
+            Ok(pid) => {
+                log::info(&format!("Launcher PID = {}", pid));
+            }
+            Err(e) => {
+                eprintln!(
+                    "Warning: Failed to launch {}: {}",
+                    first_profile.exe_path, e
+                );
+                eprintln!("Continuing — looking for already-running game windows...");
+                log::warn(&format!("Failed to launch launcher: {}", e));
+            }
+        }
+
+        // Phase 1: Wait for first window (up to 30s), then continue immediately
+        let first_timeout = 30_000 / 500;
+        let mut positioned = 0usize;
+        for _ in 0..first_timeout {
+            let new_hwnds = window::collect_new_windows(game_name, &windows);
+            for hwnd in new_hwnds {
+                if positioned >= slot_count {
+                    break;
                 }
+                windows.push(hwnd);
+                let slot = &config.team.slots[positioned];
+                let region = resolved.slot_to_region[&slot.index];
+                unsafe {
+                    window::apply_region(hwnd, region);
+                }
+                let mut pid: DWORD = 0;
+                unsafe {
+                    winapi::um::winuser::GetWindowThreadProcessId(hwnd, &mut pid);
+                }
+                positioned += 1;
                 println!(
-                    "Slot {} ({}) -> {} ({},{} {}x{}) [pid {}]",
-                    i + 1,
+                    "  Slot {} ({}) -> {} ({},{} {}x{}) [pid {}]",
+                    positioned,
                     slot.account,
                     region.name,
                     region.x,
@@ -353,30 +532,178 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
                     pid
                 );
                 log::info(&format!(
-                    "Slot {} positioned at {} (hwnd {:x})",
-                    i + 1,
-                    region.name,
-                    w.hwnd as usize
+                    "Slot {} positioned at {} (hwnd {:x}, pid {})",
+                    positioned, region.name, hwnd as usize, pid
                 ));
-                found = true;
+            }
+            if positioned > 0 {
+                // Got at least 1 window — break out, set up hotkeys, continue
                 break;
             }
-            thread::sleep(Duration::from_millis(100));
+            if positioned == 0 {
+                println!("  Waiting for game windows...");
+            }
+            thread::sleep(Duration::from_millis(500));
         }
-        if !found {
+
+        if positioned == 0 {
             eprintln!(
-                "WARNING: Could not find window for slot {} (PID {}) within {}ms",
-                i + 1,
-                pid,
-                timeout
+                "ERROR: No {} windows found within 30s. Is the launcher running?",
+                game_name
             );
-            log::warn(&format!(
-                "Slot {} (PID {}) window not found within {}ms",
-                i + 1,
-                pid,
-                timeout
+            log::warn(&format!("No {} windows found within 30s", game_name));
+        } else {
+            println!(
+                "Found {}/{} windows. Hotkeys active for those slots.",
+                positioned, slot_count
+            );
+            log::info(&format!(
+                "Found {}/{} windows initially",
+                positioned, slot_count
             ));
-            windows.push(std::ptr::null_mut());
+        }
+    } else {
+        // Direct mode: launch each slot's exe and find by PID
+        // (file_lock is already held from the top of run_live)
+
+        let mut pids: Vec<DWORD> = Vec::new();
+        for (i, slot) in config.team.slots.iter().enumerate() {
+            let account = resolved.accounts.get(slot.account.as_str()).unwrap();
+            let profile = resolved.slot_to_profile[&slot.index];
+            println!(
+                "Launching slot {} (account: {}, profile: {})...",
+                i + 1,
+                slot.account,
+                profile.name
+            );
+            log::info(&format!(
+                "Launching slot {} (account={}, profile={})",
+                i + 1,
+                slot.account,
+                profile.name
+            ));
+            let pid = if false {
+                // Injection disabled — bypass DLL interferes with GW2 startup
+                let bypass_dll = r"C:\Program Files\Guild Wars 2\multisbox_bypass_v2.dll";
+                if std::path::Path::new(bypass_dll).exists() {
+                    log::info(&format!(
+                        "Slot {}: launching with bypass DLL injection (instance={})",
+                        i + 1,
+                        i + 1
+                    ));
+                    gw2_multibox::launcher_inject::launch_with_inject(
+                        profile,
+                        account.extra_args.as_ref(),
+                        i + 1,
+                        bypass_dll,
+                    )?
+                } else {
+                    log::warn(&format!(
+                        "Bypass DLL not found at {} — using direct launch (may fail)",
+                        bypass_dll
+                    ));
+                    launcher::launch(profile, account.extra_args.as_ref())?
+                }
+            } else {
+                launcher::launch(profile, account.extra_args.as_ref())?
+            };
+            log::info(&format!("Slot {} PID = {}", i + 1, pid));
+            pids.push(pid);
+            if let Some(mutex_name) = &profile.kill_mutex {
+                // Wait briefly so the game has time to call CreateMutex
+                thread::sleep(Duration::from_millis(1500));
+                log::info(&format!(
+                    "Slot {}: attempting to kill mutex '{}' in pid {}",
+                    i + 1,
+                    mutex_name,
+                    pid
+                ));
+                match mutex_kill::kill_mutex_in_process(pid, mutex_name) {
+                    Ok(mutex_kill::KillResult::Killed) => {
+                        println!("  Slot {} mutex '{}' killed.", i + 1, mutex_name);
+                        log::info(&format!("Slot {} mutex '{}' killed", i + 1, mutex_name));
+                    }
+                    Ok(mutex_kill::KillResult::NotFound) => {
+                        println!(
+                            "  Slot {} mutex '{}' not found (already killed or not created yet).",
+                            i + 1,
+                            mutex_name
+                        );
+                        log::warn(&format!(
+                            "Slot {} mutex '{}' not found within budget",
+                            i + 1,
+                            mutex_name
+                        ));
+                    }
+                    Err(e) => {
+                        eprintln!("  Slot {} mutex kill failed: {} (continuing)", i + 1, e);
+                        log::warn(&format!("Slot {} mutex kill failed: {}", i + 1, e));
+                    }
+                }
+            }
+            if i < config.team.slots.len() - 1 {
+                thread::sleep(Duration::from_millis(stagger));
+            }
+        }
+        println!("All {} instances launched.", pids.len());
+
+        // Poll for windows by PID
+        let poll_iterations = timeout / 100;
+        for (i, slot) in config.team.slots.iter().enumerate() {
+            let pid = pids[i];
+            let region = resolved.slot_to_region[&slot.index];
+            let mut found = false;
+            for _ in 0..poll_iterations {
+                // First try the standard "visible + titled" path (works
+                // for most games and matches what the web UI/debug
+                // --list-windows shows). Fall back to the permissive
+                // "any window owned by pid" path for games like GW2
+                // whose main window is briefly hidden or has an empty
+                // title during early startup.
+                let primary = window::find_primary_by_pid(pid).map(|w| w.hwnd);
+                let any = window::find_any_window_by_pid(pid);
+                if let Some(hwnd) = primary.or(any) {
+                    windows.push(hwnd);
+                    unsafe {
+                        window::apply_region(hwnd, region);
+                    }
+                    println!(
+                        "Slot {} ({}) -> {} ({},{} {}x{}) [pid {}]",
+                        i + 1,
+                        slot.account,
+                        region.name,
+                        region.x,
+                        region.y,
+                        region.width,
+                        region.height,
+                        pid
+                    );
+                    log::info(&format!(
+                        "Slot {} positioned at {} (hwnd {:x})",
+                        i + 1,
+                        region.name,
+                        hwnd as usize
+                    ));
+                    found = true;
+                    break;
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+            if !found {
+                eprintln!(
+                    "WARNING: Could not find window for slot {} (PID {}) within {}ms",
+                    i + 1,
+                    pid,
+                    timeout
+                );
+                log::warn(&format!(
+                    "Slot {} (PID {}) window not found within {}ms",
+                    i + 1,
+                    pid,
+                    timeout
+                ));
+                windows.push(std::ptr::null_mut());
+            }
         }
     }
 
@@ -391,33 +718,84 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
         log::info("Activated slot 1");
     }
 
-    // Register hotkeys
-    let slot_count = config.team.slots.len();
+    // Register hotkeys — only for windows we actually found
+    let active_count = windows.len();
     let mut hkm = hotkey::HotkeyManager::new();
-    hkm.register(slot_count)?;
-    println!(
-        "\nHotkeys registered: F1..F{} to switch windows.",
-        slot_count
-    );
-    println!("Press Ctrl+C to exit.\n");
+    hkm.register(active_count)?;
+    if active_count > 0 {
+        println!(
+            "\nHotkeys registered: F1..F{} to switch windows.",
+            active_count
+        );
+        println!("Press Ctrl+C to exit.\n");
+    }
     log::info(&format!(
         "Registered {} hotkeys (F1..F{})",
-        slot_count, slot_count
+        active_count, active_count
     ));
 
-    // Message loop
-    hotkey::run_loop(slot_count, |idx| {
-        if idx < windows.len() {
-            let hwnd = windows[idx];
-            if !hwnd.is_null() {
-                unsafe {
-                    window::activate(hwnd);
-                }
-                println!("Switched to slot {}.", idx + 1);
-                log::info(&format!("Switched to slot {}", idx + 1));
-            }
+    // Initialize input broadcasting
+    let mut broadcast_mgr =
+        broadcast::BroadcastManager::new(config.broadcast.clone(), windows.clone());
+    let _broadcast_toggle_key = config.broadcast.toggle_key;
+    if config.broadcast.enabled {
+        if let Err(e) = broadcast_mgr.enable() {
+            eprintln!("Warning: Failed to enable input broadcasting: {}", e);
+            log::warn(&format!("Failed to enable broadcasting: {}", e));
+        } else {
+            println!("Input broadcasting enabled (toggle: F9).");
+            log::info("Input broadcasting enabled");
         }
-    });
+    } else {
+        println!("Input broadcasting disabled (press F9 to toggle).");
+    }
+
+    // Initialize tray icon
+    let tray_hwnd_result = unsafe { tray::create_hidden_window() };
+    let mut tray_icon_hwnd: HWND = std::ptr::null_mut();
+    let _tray_mgr = match tray_hwnd_result {
+        Ok(hwnd) => {
+            tray_icon_hwnd = hwnd;
+            let mut mgr = tray::TrayManager::new(hwnd);
+            if let Err(e) = mgr.init(VERSION) {
+                eprintln!("Warning: Failed to initialize tray icon: {}", e);
+                log::warn(&format!("Failed to initialize tray icon: {}", e));
+            } else {
+                println!("System tray icon initialized.");
+                log::info("System tray icon initialized");
+            }
+            Some(mgr)
+        }
+        Err(e) => {
+            eprintln!("Warning: Failed to create tray window: {}", e);
+            log::warn(&format!("Failed to create tray window: {}", e));
+            None
+        }
+    };
+    // Message loop — passes tray HWND so tray events are dispatched
+    let tray_for_loop = if tray_icon_hwnd.is_null() {
+        None
+    } else {
+        Some(tray_icon_hwnd)
+    };
+
+    hotkey::run_loop(
+        active_count,
+        |idx| {
+            if idx < windows.len() {
+                let hwnd = windows[idx];
+                if !hwnd.is_null() {
+                    unsafe {
+                        window::activate(hwnd);
+                    }
+                    broadcast_mgr.set_active_slot(idx);
+                    println!("Switched to slot {}.", idx + 1);
+                    log::info(&format!("Switched to slot {}", idx + 1));
+                }
+            }
+        },
+        tray_for_loop,
+    );
 
     // hkm auto-unregisters on drop
     log::info("Exited");
@@ -442,6 +820,9 @@ fn main() -> Result<()> {
         log::set_level(log::Level::Debug);
     }
 
+    // Enable per-monitor DPI awareness
+    window::set_dpi_awareness();
+
     match args.mode {
         Mode::Run => run_live(&args.config_path),
         Mode::DryRun => run_dry_run(&args.config_path),
@@ -449,6 +830,9 @@ fn main() -> Result<()> {
         Mode::Ui => run_ui(args.config_path, args.ui_port),
         Mode::Init => run_init(&args.config_path),
         Mode::Gw2Init => run_gw2_init(&args.config_path),
+        Mode::WowInit => run_wow_init(&args.config_path),
+        Mode::FfxivInit => run_ffxiv_init(&args.config_path),
+        Mode::EveInit => run_eve_init(&args.config_path),
         Mode::Help | Mode::Version => Ok(()), // handled above
     }
 }

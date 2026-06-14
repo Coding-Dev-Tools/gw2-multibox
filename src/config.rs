@@ -20,6 +20,21 @@ pub struct GameProfile {
     /// Lets the game initialize its renderer before we try to position it.
     #[serde(default)]
     pub window_ready_delay_ms: Option<u64>,
+    /// If true, exe_path is a launcher (e.g. GW2Launcher.exe) that spawns
+    /// the actual game processes. Multisbox will launch it once and then
+    /// search for game windows by process name instead of by PID.
+    #[serde(default)]
+    pub launcher_mode: bool,
+    /// When launcher_mode=true, the process name to search for (e.g. "Gw2-64").
+    #[serde(default)]
+    pub game_process_name: Option<String>,
+    /// If set, after the process is launched the launcher will locate and
+    /// close a named mutex in the process's handle table. Used to bypass
+    /// GW2's single-instance check (`ANET-WIN32-MUTEX`). `None` (default)
+    /// means no kill is attempted — safe for any game that doesn't enforce
+    /// a mutex.
+    #[serde(default)]
+    pub kill_mutex: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -62,6 +77,34 @@ pub struct TeamOptions {
     pub window_timeout_ms: Option<u64>,
 }
 
+/// Input broadcasting configuration.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct BroadcastConfig {
+    /// Whether broadcasting is enabled. Default: false
+    #[serde(default)]
+    pub enabled: bool,
+    /// List of VK codes to forward. Empty = forward all except modifiers.
+    #[serde(default)]
+    pub keys: Vec<u32>,
+    /// Toggle key VK code. Default: 0x78 (F9)
+    #[serde(default = "default_toggle_key")]
+    pub toggle_key: u32,
+}
+
+impl Default for BroadcastConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            keys: vec![],
+            toggle_key: default_toggle_key(),
+        }
+    }
+}
+
+fn default_toggle_key() -> u32 {
+    0x78 // F9
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Team {
     pub name: String,
@@ -76,6 +119,12 @@ pub struct Config {
     pub accounts: Vec<Account>,
     pub layout: Layout,
     pub team: Team,
+    /// Input broadcasting settings.
+    #[serde(default)]
+    pub broadcast: BroadcastConfig,
+    /// Named layouts that can be loaded via the web UI or CLI.
+    #[serde(default)]
+    pub named_layouts: Vec<Layout>,
 }
 
 impl Config {
@@ -89,6 +138,9 @@ impl Config {
                 args: vec![],
                 working_dir: None,
                 window_ready_delay_ms: None,
+                launcher_mode: false,
+                game_process_name: None,
+                kill_mutex: None,
             }],
             accounts: vec![Account {
                 name: "account-1".to_string(),
@@ -117,6 +169,8 @@ impl Config {
                     window_timeout_ms: Some(60000),
                 },
             },
+            broadcast: BroadcastConfig::default(),
+            named_layouts: vec![],
         }
     }
 
@@ -364,6 +418,9 @@ pub fn gw2_template() -> Config {
             args: vec!["-shareArchive".to_string()],
             working_dir: None,
             window_ready_delay_ms: Some(5000),
+            launcher_mode: false,
+            game_process_name: None,
+            kill_mutex: Some(crate::mutex_kill::GW2_MUTEX_NAME.to_string()),
         }],
         accounts: vec![
             Account {
@@ -449,6 +506,8 @@ pub fn gw2_template() -> Config {
                 window_timeout_ms: Some(60000),
             },
         },
+        broadcast: BroadcastConfig::default(),
+        named_layouts: vec![],
     }
 }
 
@@ -459,6 +518,459 @@ fn get_primary_monitor_size() -> (u32, u32) {
         let h = winapi::um::wingdi::GetDeviceCaps(hdc, winapi::um::wingdi::VERTRES);
         winapi::um::winuser::ReleaseDC(std::ptr::null_mut(), hdc);
         (w.max(1920) as u32, h.max(1080) as u32)
+    }
+}
+
+/// Auto-detect World of Warcraft install path from registry.
+pub fn detect_wow_path() -> Option<String> {
+    unsafe {
+        let hklm = HKEY_LOCAL_MACHINE;
+        let paths = [
+            r"SOFTWARE\Blizzard Entertainment\World of Warcraft",
+            r"SOFTWARE\WOW6432Node\Blizzard Entertainment\World of Warcraft",
+        ];
+        for subkey in &paths {
+            let mut hkey: HKEY = std::ptr::null_mut();
+            if RegOpenKeyExW(hklm, to_wide(subkey).as_ptr(), 0, KEY_READ, &mut hkey) == 0 {
+                let mut buf = [0u16; 512];
+                let mut len = buf.len() as u32 * 2;
+                let mut typ = 0;
+                if RegGetValueW(
+                    hkey,
+                    std::ptr::null(),
+                    to_wide("InstallPath").as_ptr(),
+                    RRF_RT_REG_SZ,
+                    &mut typ,
+                    buf.as_mut_ptr() as *mut _,
+                    &mut len,
+                ) == 0
+                {
+                    RegCloseKey(hkey);
+                    let loc = String::from_utf16_lossy(&buf)
+                        .trim_end_matches('\0')
+                        .to_string();
+                    let exe = PathBuf::from(loc.clone()).join(r"_retail_\WorldOf Warcraft.exe");
+                    if exe.exists() {
+                        return Some(exe.to_string_lossy().to_string());
+                    }
+                    // Try classic
+                    let exe_classic = PathBuf::from(loc).join(r"_classic_\WorldOf Warcraft.exe");
+                    if exe_classic.exists() {
+                        return Some(exe_classic.to_string_lossy().to_string());
+                    }
+                }
+                RegCloseKey(hkey);
+            }
+        }
+    }
+    None
+}
+
+/// Auto-detect Final Fantasy XIV install path from registry.
+pub fn detect_ffxiv_path() -> Option<String> {
+    unsafe {
+        let hklm = HKEY_LOCAL_MACHINE;
+        let paths = [
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Steam App 39210",
+            r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Steam App 39210",
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\FFXIV",
+            r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\FFXIV",
+        ];
+        for subkey in &paths {
+            let mut hkey: HKEY = std::ptr::null_mut();
+            if RegOpenKeyExW(hklm, to_wide(subkey).as_ptr(), 0, KEY_READ, &mut hkey) == 0 {
+                let mut buf = [0u16; 512];
+                let mut len = buf.len() as u32 * 2;
+                let mut typ = 0;
+                if RegGetValueW(
+                    hkey,
+                    std::ptr::null(),
+                    to_wide("InstallLocation").as_ptr(),
+                    RRF_RT_REG_SZ,
+                    &mut typ,
+                    buf.as_mut_ptr() as *mut _,
+                    &mut len,
+                ) == 0
+                {
+                    RegCloseKey(hkey);
+                    let loc = String::from_utf16_lossy(&buf)
+                        .trim_end_matches('\0')
+                        .to_string();
+                    let exe = PathBuf::from(loc).join(r"game\ffxivboot.exe");
+                    if exe.exists() {
+                        return Some(exe.to_string_lossy().to_string());
+                    }
+                }
+                RegCloseKey(hkey);
+            }
+        }
+    }
+    None
+}
+
+/// Auto-detect EVE Online install path from registry.
+pub fn detect_eve_path() -> Option<String> {
+    unsafe {
+        let hklm = HKEY_LOCAL_MACHINE;
+        let paths = [
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\EVE Online",
+            r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\EVE Online",
+        ];
+        for subkey in &paths {
+            let mut hkey: HKEY = std::ptr::null_mut();
+            if RegOpenKeyExW(hklm, to_wide(subkey).as_ptr(), 0, KEY_READ, &mut hkey) == 0 {
+                let mut buf = [0u16; 512];
+                let mut len = buf.len() as u32 * 2;
+                let mut typ = 0;
+                if RegGetValueW(
+                    hkey,
+                    std::ptr::null(),
+                    to_wide("InstallLocation").as_ptr(),
+                    RRF_RT_REG_SZ,
+                    &mut typ,
+                    buf.as_mut_ptr() as *mut _,
+                    &mut len,
+                ) == 0
+                {
+                    RegCloseKey(hkey);
+                    let loc = String::from_utf16_lossy(&buf)
+                        .trim_end_matches('\0')
+                        .to_string();
+                    let exe = PathBuf::from(loc).join(r"ExeFile\eve.exe");
+                    if exe.exists() {
+                        return Some(exe.to_string_lossy().to_string());
+                    }
+                }
+                RegCloseKey(hkey);
+            }
+        }
+    }
+    None
+}
+
+/// Generate a WoW-optimized starter config.
+pub fn wow_template() -> Config {
+    let exe_path = detect_wow_path().unwrap_or_else(|| {
+        r"C:\Program Files\World of Warcraft\_retail_\WorldOf Warcraft.exe".to_string()
+    });
+
+    let (mon_w, mon_h) = get_primary_monitor_size();
+    let (region_w, region_h) = (mon_w / 2, mon_h / 2);
+
+    Config {
+        game_profiles: vec![GameProfile {
+            name: "wow".to_string(),
+            exe_path,
+            args: vec![],
+            working_dir: None,
+            window_ready_delay_ms: Some(8000),
+            launcher_mode: false,
+            game_process_name: None,
+            kill_mutex: None,
+        }],
+        accounts: vec![
+            Account {
+                name: "Account1".to_string(),
+                game_profile: "wow".to_string(),
+                extra_args: None,
+            },
+            Account {
+                name: "Account2".to_string(),
+                game_profile: "wow".to_string(),
+                extra_args: None,
+            },
+            Account {
+                name: "Account3".to_string(),
+                game_profile: "wow".to_string(),
+                extra_args: None,
+            },
+            Account {
+                name: "Account4".to_string(),
+                game_profile: "wow".to_string(),
+                extra_args: None,
+            },
+        ],
+        layout: Layout {
+            name: "2x2-grid".to_string(),
+            regions: vec![
+                Region {
+                    name: "tl".to_string(),
+                    x: 0,
+                    y: 0,
+                    width: region_w as i32,
+                    height: region_h as i32,
+                },
+                Region {
+                    name: "tr".to_string(),
+                    x: region_w as i32,
+                    y: 0,
+                    width: region_w as i32,
+                    height: region_h as i32,
+                },
+                Region {
+                    name: "bl".to_string(),
+                    x: 0,
+                    y: region_h as i32,
+                    width: region_w as i32,
+                    height: region_h as i32,
+                },
+                Region {
+                    name: "br".to_string(),
+                    x: region_w as i32,
+                    y: region_h as i32,
+                    width: region_w as i32,
+                    height: region_h as i32,
+                },
+            ],
+        },
+        team: Team {
+            name: "4box".to_string(),
+            slots: vec![
+                Slot {
+                    index: 1,
+                    account: "Account1".to_string(),
+                    region: "tl".to_string(),
+                },
+                Slot {
+                    index: 2,
+                    account: "Account2".to_string(),
+                    region: "tr".to_string(),
+                },
+                Slot {
+                    index: 3,
+                    account: "Account3".to_string(),
+                    region: "bl".to_string(),
+                },
+                Slot {
+                    index: 4,
+                    account: "Account4".to_string(),
+                    region: "br".to_string(),
+                },
+            ],
+            options: TeamOptions {
+                stagger_delay_ms: Some(5000),
+                window_timeout_ms: Some(120000),
+            },
+        },
+        broadcast: BroadcastConfig::default(),
+        named_layouts: vec![],
+    }
+}
+
+/// Generate a FFXIV-optimized starter config.
+pub fn ffxiv_template() -> Config {
+    let exe_path = detect_ffxiv_path().unwrap_or_else(|| {
+        r"C:\Program Files (x86)\Square Enix\FINAL FANTASY XIV\boot\ffxivboot.exe".to_string()
+    });
+
+    let (mon_w, mon_h) = get_primary_monitor_size();
+    let (region_w, region_h) = (mon_w / 2, mon_h / 2);
+
+    Config {
+        game_profiles: vec![GameProfile {
+            name: "ffxiv".to_string(),
+            exe_path,
+            args: vec![],
+            working_dir: None,
+            window_ready_delay_ms: Some(10000),
+            launcher_mode: false,
+            game_process_name: None,
+            kill_mutex: None,
+        }],
+        accounts: vec![
+            Account {
+                name: "Account1".to_string(),
+                game_profile: "ffxiv".to_string(),
+                extra_args: None,
+            },
+            Account {
+                name: "Account2".to_string(),
+                game_profile: "ffxiv".to_string(),
+                extra_args: None,
+            },
+            Account {
+                name: "Account3".to_string(),
+                game_profile: "ffxiv".to_string(),
+                extra_args: None,
+            },
+            Account {
+                name: "Account4".to_string(),
+                game_profile: "ffxiv".to_string(),
+                extra_args: None,
+            },
+        ],
+        layout: Layout {
+            name: "2x2-grid".to_string(),
+            regions: vec![
+                Region {
+                    name: "tl".to_string(),
+                    x: 0,
+                    y: 0,
+                    width: region_w as i32,
+                    height: region_h as i32,
+                },
+                Region {
+                    name: "tr".to_string(),
+                    x: region_w as i32,
+                    y: 0,
+                    width: region_w as i32,
+                    height: region_h as i32,
+                },
+                Region {
+                    name: "bl".to_string(),
+                    x: 0,
+                    y: region_h as i32,
+                    width: region_w as i32,
+                    height: region_h as i32,
+                },
+                Region {
+                    name: "br".to_string(),
+                    x: region_w as i32,
+                    y: region_h as i32,
+                    width: region_w as i32,
+                    height: region_h as i32,
+                },
+            ],
+        },
+        team: Team {
+            name: "4box".to_string(),
+            slots: vec![
+                Slot {
+                    index: 1,
+                    account: "Account1".to_string(),
+                    region: "tl".to_string(),
+                },
+                Slot {
+                    index: 2,
+                    account: "Account2".to_string(),
+                    region: "tr".to_string(),
+                },
+                Slot {
+                    index: 3,
+                    account: "Account3".to_string(),
+                    region: "bl".to_string(),
+                },
+                Slot {
+                    index: 4,
+                    account: "Account4".to_string(),
+                    region: "br".to_string(),
+                },
+            ],
+            options: TeamOptions {
+                stagger_delay_ms: Some(5000),
+                window_timeout_ms: Some(120000),
+            },
+        },
+        broadcast: BroadcastConfig::default(),
+        named_layouts: vec![],
+    }
+}
+
+/// Generate an EVE Online-optimized starter config.
+pub fn eve_template() -> Config {
+    let exe_path = detect_eve_path()
+        .unwrap_or_else(|| r"C:\Program Files (x86)\CCP\EVE\ExeFile\eve.exe".to_string());
+
+    let (mon_w, mon_h) = get_primary_monitor_size();
+    let (region_w, region_h) = (mon_w / 2, mon_h / 2);
+
+    Config {
+        game_profiles: vec![GameProfile {
+            name: "eve".to_string(),
+            exe_path,
+            args: vec![],
+            working_dir: None,
+            window_ready_delay_ms: Some(8000),
+            launcher_mode: false,
+            game_process_name: None,
+            kill_mutex: None,
+        }],
+        accounts: vec![
+            Account {
+                name: "Account1".to_string(),
+                game_profile: "eve".to_string(),
+                extra_args: None,
+            },
+            Account {
+                name: "Account2".to_string(),
+                game_profile: "eve".to_string(),
+                extra_args: None,
+            },
+            Account {
+                name: "Account3".to_string(),
+                game_profile: "eve".to_string(),
+                extra_args: None,
+            },
+            Account {
+                name: "Account4".to_string(),
+                game_profile: "eve".to_string(),
+                extra_args: None,
+            },
+        ],
+        layout: Layout {
+            name: "2x2-grid".to_string(),
+            regions: vec![
+                Region {
+                    name: "tl".to_string(),
+                    x: 0,
+                    y: 0,
+                    width: region_w as i32,
+                    height: region_h as i32,
+                },
+                Region {
+                    name: "tr".to_string(),
+                    x: region_w as i32,
+                    y: 0,
+                    width: region_w as i32,
+                    height: region_h as i32,
+                },
+                Region {
+                    name: "bl".to_string(),
+                    x: 0,
+                    y: region_h as i32,
+                    width: region_w as i32,
+                    height: region_h as i32,
+                },
+                Region {
+                    name: "br".to_string(),
+                    x: region_w as i32,
+                    y: region_h as i32,
+                    width: region_w as i32,
+                    height: region_h as i32,
+                },
+            ],
+        },
+        team: Team {
+            name: "4box".to_string(),
+            slots: vec![
+                Slot {
+                    index: 1,
+                    account: "Account1".to_string(),
+                    region: "tl".to_string(),
+                },
+                Slot {
+                    index: 2,
+                    account: "Account2".to_string(),
+                    region: "tr".to_string(),
+                },
+                Slot {
+                    index: 3,
+                    account: "Account3".to_string(),
+                    region: "bl".to_string(),
+                },
+                Slot {
+                    index: 4,
+                    account: "Account4".to_string(),
+                    region: "br".to_string(),
+                },
+            ],
+            options: TeamOptions {
+                stagger_delay_ms: Some(5000),
+                window_timeout_ms: Some(120000),
+            },
+        },
+        broadcast: BroadcastConfig::default(),
+        named_layouts: vec![],
     }
 }
 
@@ -474,6 +986,9 @@ mod tests {
                 args: vec!["-foo".to_string()],
                 working_dir: None,
                 window_ready_delay_ms: None,
+                launcher_mode: false,
+                game_process_name: None,
+                kill_mutex: None,
             }],
             accounts: vec![Account {
                 name: "a1".to_string(),
@@ -499,6 +1014,8 @@ mod tests {
                 }],
                 options: TeamOptions::default(),
             },
+            broadcast: BroadcastConfig::default(),
+            named_layouts: vec![],
         }
     }
 
@@ -634,7 +1151,38 @@ mod tests {
             args: vec![],
             working_dir: None,
             window_ready_delay_ms: None,
+            launcher_mode: false,
+            game_process_name: None,
+            kill_mutex: None,
         });
         assert!(resolve(&cfg).is_err());
+    }
+
+    #[test]
+    fn kill_mutex_field_default_is_none() {
+        let cfg = minimal_config();
+        assert!(cfg.game_profiles[0].kill_mutex.is_none());
+    }
+
+    #[test]
+    fn kill_mutex_field_parses_when_set() {
+        let mut cfg = minimal_config();
+        cfg.game_profiles[0].kill_mutex = Some("FOO-MUTEX".to_string());
+        let s = serde_yaml::to_string(&cfg).expect("serialize");
+        let back: Config = serde_yaml::from_str(&s).expect("deserialize");
+        assert_eq!(
+            back.game_profiles[0].kill_mutex.as_deref(),
+            Some("FOO-MUTEX")
+        );
+    }
+
+    #[test]
+    fn gw2_template_sets_kill_mutex() {
+        let cfg = gw2_template();
+        assert_eq!(cfg.game_profiles.len(), 1);
+        assert_eq!(
+            cfg.game_profiles[0].kill_mutex.as_deref(),
+            Some(crate::mutex_kill::GW2_MUTEX_NAME)
+        );
     }
 }

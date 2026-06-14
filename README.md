@@ -22,7 +22,8 @@ you switch between them with hotkeys.
 - ✅ File-based structured logging
 - ✅ Validation mode (`--dry-run`) catches errors before launch
 - ✅ Window enumeration (`--list-windows`) for debugging
-- ✅ 16 unit tests for config parsing and validation
+- ✅ Bypasses GW2 instance mutex for true multi-account play
+- ✅ 19 unit tests for config parsing and validation
 - ✅ Single-file binary — no installer, no runtime dependencies
 
 ## Not in this release

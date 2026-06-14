@@ -59,9 +59,14 @@ impl Drop for HotkeyManager {
 
 /// Run the message loop and dispatch hotkey events to the callback.
 /// Returns when GetMessageW returns 0 (typically only on WM_QUIT).
-pub fn run_loop<F: FnMut(usize)>(slot_count: usize, mut on_hotkey: F) {
+/// If `tray_hwnd` is provided, it is passed to GetMessageW so tray messages arrive.
+pub fn run_loop<F: FnMut(usize)>(slot_count: usize, mut on_hotkey: F, tray_hwnd: Option<HWND>) {
     unsafe {
         let mut msg: MSG = mem::zeroed();
+        let tray = tray_hwnd.unwrap_or(0 as HWND);
+        // GetMessageW with a specific HWND only retrieves messages for that window
+        // plus thread messages (hotkeys). We use 0 to get all thread messages
+        // and filter tray messages by hwnd.
         while GetMessageW(&mut msg, 0 as HWND, 0, 0) != 0 {
             if msg.message == WM_HOTKEY {
                 let idx = (msg.wParam as i32).wrapping_sub(HOTKEY_BASE_ID) as usize;
@@ -69,6 +74,10 @@ pub fn run_loop<F: FnMut(usize)>(slot_count: usize, mut on_hotkey: F) {
                     on_hotkey(idx);
                 }
             }
+            // Window messages (tray events etc.) are dispatched by DispatchMessageW
+            // to the window's WndProc automatically.
+            DispatchMessageW(&msg);
+            let _ = tray; // tray messages handled by WndProc
         }
     }
 }

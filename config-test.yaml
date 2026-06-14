@@ -1,31 +1,84 @@
-# Test config: launches notepad windows for layout testing (no real GW2)
 game_profiles:
-  - name: test
-    exe_path: "C:/Windows/System32/notepad.exe"
-    args: []
-    working_dir: "C:/Windows/System32"
-
+- name: gw2-1
+  exe_path: C:\Program Files\Guild Wars 2\Gw2-64.exe
+  args: []
+  working_dir: C:\Program Files\Guild Wars 2
+  window_ready_delay_ms: 5000
+  kill_mutex: ANET-WIN32-MUTEX
+- name: gw2-2
+  exe_path: C:\GuildWars2-Multi\Gw2-64_2.exe
+  args: []
+  working_dir: C:\Program Files\Guild Wars 2
+  window_ready_delay_ms: 5000
+  kill_mutex: ANET-WIN32-MUTEX
+- name: gw2-3
+  exe_path: C:\GuildWars2-Multi\Gw2-64_3.exe
+  args: []
+  working_dir: C:\Program Files\Guild Wars 2
+  window_ready_delay_ms: 5000
+  kill_mutex: ANET-WIN32-MUTEX
+- name: gw2-4
+  exe_path: C:\GuildWars2-Multi\Gw2-64_4.exe
+  args: []
+  working_dir: C:\Program Files\Guild Wars 2
+  window_ready_delay_ms: 5000
+  kill_mutex: ANET-WIN32-MUTEX
 accounts:
-  - { name: n1, game_profile: test }
-  - { name: n2, game_profile: test }
-  - { name: n3, game_profile: test }
-  - { name: n4, game_profile: test }
-
+- name: Account1
+  game_profile: gw2-1
+  extra_args: null
+- name: Account2
+  game_profile: gw2-2
+  extra_args: null
+- name: Account3
+  game_profile: gw2-3
+  extra_args: null
+- name: Account4
+  game_profile: gw2-4
+  extra_args: null
 layout:
-  name: four-stack-test
+  name: 2x2-grid
   regions:
-    - { name: main, x: 0, y: 0, width: 800, height: 600 }
-    - { name: s2, x: 800, y: 0, width: 400, height: 300 }
-    - { name: s3, x: 800, y: 300, width: 400, height: 300 }
-    - { name: s4, x: 0, y: 600, width: 400, height: 300 }
-
+  - name: tl
+    x: 0
+    y: 0
+    width: 1720
+    height: 720
+  - name: tr
+    x: 1720
+    y: 0
+    width: 1720
+    height: 720
+  - name: bl
+    x: 0
+    y: 720
+    width: 1720
+    height: 720
+  - name: br
+    x: 1720
+    y: 720
+    width: 1720
+    height: 720
 team:
-  name: notepad-test
+  name: 4box
   slots:
-    - { index: 1, account: n1, region: main }
-    - { index: 2, account: n2, region: s2 }
-    - { index: 3, account: n3, region: s3 }
-    - { index: 4, account: n4, region: s4 }
+  - index: 1
+    account: Account1
+    region: tl
+  - index: 2
+    account: Account2
+    region: tr
+  - index: 3
+    account: Account3
+    region: bl
+  - index: 4
+    account: Account4
+    region: br
   options:
-    stagger_delay_ms: 1000
-    window_timeout_ms: 5000
+    stagger_delay_ms: 8000
+    window_timeout_ms: 120000
+broadcast:
+  enabled: false
+  keys: []
+  toggle_key: 120
+named_layouts: []

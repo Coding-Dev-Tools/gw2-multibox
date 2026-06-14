@@ -106,6 +106,17 @@ fn handle_client(
             let body = format!(r#"{{"ok":true,"version":"{}"}}"#, env!("CARGO_PKG_VERSION"));
             respond_json(&mut stream, 200, &body)?;
         }
+        ("GET", "/api/monitors") => {
+            let monitors = crate::window::list_monitors();
+            let body = serde_json::to_string(&monitors)?;
+            respond_json(&mut stream, 200, &body)?;
+        }
+        ("GET", "/api/windows") => {
+            let windows_raw = crate::window::list_all_windows_with_rect();
+            let windows: Vec<_> = windows_raw.iter().map(|(w, r)| (w.to_json(), r)).collect();
+            let body = serde_json::to_string(&windows)?;
+            respond_json(&mut stream, 200, &body)?;
+        }
         ("POST", "/api/wizard/create") => {
             let mut body = String::new();
             reader.read_to_string(&mut body)?;
@@ -117,10 +128,12 @@ fn handle_client(
             }
             match serde_json::from_str::<WizardReq>(&body) {
                 Ok(req) => {
-                    let cfg = if req.game == "gw2" {
-                        gw2_template()
-                    } else {
-                        Config::template()
+                    let cfg = match req.game.as_str() {
+                        "gw2" => gw2_template(),
+                        "wow" => crate::config::wow_template(),
+                        "ffxiv" => crate::config::ffxiv_template(),
+                        "eve" => crate::config::eve_template(),
+                        _ => Config::template(),
                     };
                     // Override account count and layout
                     let mut new_cfg = cfg;

@@ -5,6 +5,10 @@ const $$ = (sel) => document.querySelectorAll(sel);
 
 let config = null;
 let dirty = false;
+let previewCanvas = null;
+let previewCtx = null;
+let dragging = null;
+let dragOffset = { x: 0, y: 0 };
 
 const PROFILE_OPTIONS = () => (config?.game_profiles || []).map(p =>
   `<option value="${escapeAttr(p.name)}">${escapeHtml(p.name)}</option>`).join('');
@@ -383,4 +387,191 @@ document.addEventListener('click', e => {
 
 document.addEventListener('change', e => {
   if (e.target.matches('input[name="game"]')) handleCustomGameToggle();
+});
+
+// --- Layout Preview ---
+function initPreview() {
+  previewCanvas = $('layout-preview');
+  if (!previewCanvas) return;
+  previewCtx = previewCanvas.getContext('2d');
+  previewCanvas.addEventListener('mousedown', onPreviewMouseDown);
+  previewCanvas.addEventListener('mousemove', onPreviewMouseMove);
+  previewCanvas.addEventListener('mouseup', onPreviewMouseUp);
+  previewCanvas.addEventListener('mouseleave', onPreviewMouseUp);
+  renderPreview();
+}
+
+function renderPreview() {
+  if (!previewCtx || !config?.layout?.regions) return;
+  const canvas = previewCanvas;
+  const ctx = previewCtx;
+  const regions = config.layout.regions;
+
+  // Find bounding box of all regions
+  let maxX = 1920, maxY = 1080;
+  regions.forEach(r => {
+    maxX = Math.max(maxX, r.x + r.width);
+    maxY = Math.max(maxY, r.y + r.height);
+  });
+
+  // Scale to fit canvas
+  const scaleX = canvas.width / maxX;
+  const scaleY = canvas.height / maxY;
+  const scale = Math.min(scaleX, scaleY) * 0.9;
+  const offsetX = (canvas.width - maxX * scale) / 2;
+  const offsetY = (canvas.height - maxY * scale) / 2;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Draw background grid
+  ctx.strokeStyle = '#333';
+  ctx.lineWidth = 1;
+  for (let x = 0; x <= maxX; x += 100) {
+    ctx.beginPath();
+    ctx.moveTo(offsetX + x * scale, offsetY);
+    ctx.lineTo(offsetX + x * scale, offsetY + maxY * scale);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= maxY; y += 100) {
+    ctx.beginPath();
+    ctx.moveTo(offsetX, offsetY + y * scale);
+    ctx.lineTo(offsetX + maxX * scale, offsetY + y * scale);
+    ctx.stroke();
+  }
+
+  // Draw regions
+  const colors = ['#4a9eff', '#ff6b6b', '#51cf66', '#ffd43b', '#cc5de8', '#ff922b'];
+  regions.forEach((r, i) => {
+    const x = offsetX + r.x * scale;
+    const y = offsetY + r.y * scale;
+    const w = r.width * scale;
+    const h = r.height * scale;
+
+    ctx.fillStyle = colors[i % colors.length] + '40';
+    ctx.fillRect(x, y, w, h);
+
+    ctx.strokeStyle = colors[i % colors.length];
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, w, h);
+
+    // Label
+    ctx.fillStyle = '#fff';
+    ctx.font = '12px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(r.name, x + w / 2, y + h / 2 - 8);
+    ctx.font = '10px monospace';
+    ctx.fillText(`${r.width}x${r.height}`, x + w / 2, y + h / 2 + 8);
+
+    // Store scaled coords for drag detection
+    r._scaled = { x, y, w, h, scale, offsetX, offsetY };
+  });
+}
+
+function onPreviewMouseDown(e) {
+  if (!config?.layout?.regions) return;
+  const rect = previewCanvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  // Find which region was clicked (reverse order for z-order)
+  for (let i = config.layout.regions.length - 1; i >= 0; i--) {
+    const r = config.layout.regions[i];
+    if (!r._scaled) continue;
+    const s = r._scaled;
+    if (mx >= s.x && mx <= s.x + s.w && my >= s.y && my <= s.y + s.h) {
+      dragging = { index: i, startX: mx, startY: my, origX: r.x, origY: r.y };
+      dragOffset.x = mx - s.x;
+      dragOffset.y = my - s.y;
+      break;
+    }
+  }
+}
+
+function onPreviewMouseMove(e) {
+  if (!dragging) return;
+  const rect = previewCanvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const r = config.layout.regions[dragging.index];
+  const scale = r._scaled.scale;
+
+  // Calculate new position
+  const newX = Math.round((mx - dragOffset.x - r._scaled.offsetX) / scale);
+  const newY = Math.round((my - dragOffset.y - r._scaled.offsetY) / scale);
+
+  // Snap to grid (10px)
+  r.x = Math.round(newX / 10) * 10;
+  r.y = Math.round(newY / 10) * 10;
+
+  markDirty();
+  renderPreview();
+  render(); // Update form fields
+}
+
+function onPreviewMouseUp() {
+  dragging = null;
+}
+
+// Named layouts
+function renderNamedLayouts() {
+  const container = $('named-layouts-list');
+  if (!container || !config?.named_layouts) return;
+
+  container.innerHTML = config.named_layouts.map((l, i) => `
+    <div class="item" data-idx="${i}">
+      <div class="item-header">
+        <strong>${escapeHtml(l.name)}</strong>
+        <div>
+          <button data-action="load">Load</button>
+          <button class="danger" data-action="del">Delete</button>
+        </div>
+      </div>
+      <div class="grid">
+        <label>Name <input type="text" data-field="name" value="${escapeAttr(l.name)}"></label>
+        <label>Regions: ${l.regions.length}</label>
+      </div>
+    </div>
+  `).join('');
+
+  container.querySelectorAll('[data-action="load"]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.closest('.item').dataset.idx);
+      loadNamedLayout(idx);
+    });
+  });
+
+  container.querySelectorAll('[data-action="del"]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.closest('.item').dataset.idx);
+      config.named_layouts.splice(idx, 1);
+      markDirty();
+      renderNamedLayouts();
+    });
+  });
+}
+
+function loadNamedLayout(idx) {
+  const layout = config.named_layouts[idx];
+  if (!layout) return;
+  config.layout = JSON.parse(JSON.stringify(layout));
+  markDirty();
+  render();
+  renderPreview();
+  showStatus(`Loaded layout: ${layout.name}`, 'ok');
+}
+
+$('save-layout')?.addEventListener('click', () => {
+  if (!config.named_layouts) config.named_layouts = [];
+  const name = prompt('Layout name:');
+  if (!name) return;
+  config.named_layouts.push(JSON.parse(JSON.stringify(config.layout)));
+  config.named_layouts[config.named_layouts.length - 1].name = name;
+  markDirty();
+  renderNamedLayouts();
+  showStatus(`Saved layout: ${name}`, 'ok');
+});
+
+// Initialize preview on load
+document.addEventListener('DOMContentLoaded', () => {
+  setTimeout(initPreview, 100);
 });

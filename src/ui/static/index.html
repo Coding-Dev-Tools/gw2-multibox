@@ -22,12 +22,27 @@
       </div>
       <div class="wizard-step hidden" data-step="2">
         <h2>Choose Your Game</h2>
-        <p>We'll auto-detect Guild Wars 2. For other games, pick "Custom" and browse.</p>
+        <p>We'll auto-detect the install path and create an optimized config.</p>
         <div class="game-options">
           <label class="game-option">
             <input type="radio" name="game" value="gw2" checked>
             <span class="game-name">Guild Wars 2</span>
-            <span class="game-desc">Auto-detect path, 4 accounts, 2x2 grid, -shareArchive</span>
+            <span class="game-desc">Auto-detect path, -shareArchive, 2x2 grid</span>
+          </label>
+          <label class="game-option">
+            <input type="radio" name="game" value="wow">
+            <span class="game-name">World of Warcraft</span>
+            <span class="game-desc">Auto-detect path, retail/classic, 2x2 grid</span>
+          </label>
+          <label class="game-option">
+            <input type="radio" name="game" value="ffxiv">
+            <span class="game-name">Final Fantasy XIV</span>
+            <span class="game-desc">Auto-detect path, Steam/standalone, 2x2 grid</span>
+          </label>
+          <label class="game-option">
+            <input type="radio" name="game" value="eve">
+            <span class="game-name">EVE Online</span>
+            <span class="game-desc">Auto-detect path, 2x2 grid</span>
           </label>
           <label class="game-option">
             <input type="radio" name="game" value="custom">
@@ -85,6 +100,13 @@
     <section id="tab-layout" class="tab">
       <h2>Layout</h2>
       <label>Name <input id="layout-name" type="text"></label>
+
+      <h3>Preview</h3>
+      <div class="preview-container">
+        <canvas id="layout-preview" width="600" height="400"></canvas>
+        <p class="hint">Drag regions to reposition. Grid snaps to 10px.</p>
+      </div>
+
       <h3>Regions</h3>
       <div id="regions-list"></div>
       <button id="add-region">+ Add Region</button>
@@ -92,6 +114,10 @@
         <p>Coordinates in pixels. Origin (0,0) is the top-left of the primary monitor.</p>
         <p>Negative X/Y values are valid (place regions on secondary monitors).</p>
       </div>
+
+      <h3>Saved Layouts</h3>
+      <div id="named-layouts-list"></div>
+      <button id="save-layout">Save Current Layout</button>
     </section>
 
     <section id="tab-profiles" class="tab">

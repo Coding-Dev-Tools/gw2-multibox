@@ -18,6 +18,21 @@ launch flags; see the per-game notes below).
    `examples/` to your working directory and renaming it `config.yaml`.
    Edit the `exe_path` to point at your game.
 
+   Or use a game-specific template:
+   ```bash
+   # Guild Wars 2
+   multisbox gw2-init
+
+   # World of Warcraft
+   multisbox wow-init
+
+   # Final Fantasy XIV
+   multisbox ffxiv-init
+
+   # EVE Online
+   multisbox eve-init
+   ```
+
 3. **Validate:** `multisbox --dry-run`
    This parses your config and prints what would happen, without launching
    anything. Use it to catch typos and config errors.
@@ -66,8 +81,9 @@ The full reference is in `docs/config-reference.md`.
 ## CLI reference
 
 ```
-multisbox [OPTIONS]
+multisbox [OPTIONS] [SUBCOMMAND]
 
+OPTIONS:
   -c, --config <PATH>    Config YAML file [default: config.yaml]
       --dry-run          Validate config, print plan, exit
       --list-windows     Print all visible windows (debug aid)
@@ -76,14 +92,31 @@ multisbox [OPTIONS]
       --debug            Enable debug logging
   -h, --help             Print help
   -v, --version          Print version
+
+SUBCOMMANDS:
+  gw2-init       Generate a Guild Wars 2 starter config
+  wow-init       Generate a World of Warcraft starter config
+  ffxiv-init     Generate a Final Fantasy XIV starter config
+  eve-init       Generate an EVE Online starter config
+  help           Print help (or a subcommand's help)
 ```
 
 ## Hotkeys
 
 - **F1** through **F(N)** — switch to slot N's window
+- **F9** — toggle input broadcasting (keyboard only, disabled by default)
 - **Ctrl+C** — exit the launcher (closes all hotkeys cleanly)
 
 Hotkeys are global (work regardless of which window is focused).
+
+Input broadcasting forwards keyboard events from the active window to all
+other windows. Enable it in your config:
+
+```yaml
+broadcast:
+  enabled: true
+  toggle_key: 0x78  # F9 (default)
+```
 
 ## Logs
 
@@ -107,9 +140,17 @@ game_profiles:
 ```
 
 The `-shareArchive` flag lets multiple instances share the asset cache.
-If the second instance fails to launch, you may need to kill the GW2
-mutex first. The tool does NOT do this automatically — it's the user's
-responsibility per the spec (avoiding memory modification).
+Multisbox **also** automatically closes GW2's instance mutex
+(`ANET-WIN32-MUTEX`) by walking the running process's handle table via
+`NtQuerySystemInformation` and calling `DuplicateHandle` with
+`DUPLICATE_CLOSE_SOURCE` — the same technique used by the popular
+third-party `Gw2Launcher` tool. This is process-external: no DLL is
+injected into the game. If the kill fails for any reason, the launch
+continues (the error is logged but not fatal).
+
+To opt out of the mutex kill, set `kill_mutex: null` in your profile, or
+delete the line. The mutex kill only runs when `kill_mutex` is set to a
+non-null string, so any other game profile is unaffected.
 
 ### World of Warcraft
 
@@ -160,8 +201,6 @@ Multisbox is a **window manager and process launcher**. It does NOT:
 - Modify game process memory
 - Intercept or send network traffic
 - Automate gameplay
-- Implement any kind of input broadcasting (Phase 2+)
 
-All it does is launch your game executable multiple times and arrange the
-windows. Anything more is your responsibility and may violate your game's
-terms of service.
+Input broadcasting (keyboard only) is implemented but disabled by default.
+Enable it only if you understand the implications for your game's terms of service.
