@@ -4,7 +4,7 @@
 //! The UI is intentionally minimal — no framework, no build step, no npm.
 //! Just vanilla JS so the binary stays single-file and self-contained.
 
-use crate::config::Config;
+use crate::config::{Config, gw2_template};
 use anyhow::Result;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -105,6 +105,119 @@ fn handle_client(
         ("GET", "/api/status") => {
             let body = format!(r#"{{"ok":true,"version":"{}"}}"#, env!("CARGO_PKG_VERSION"));
             respond_json(&mut stream, 200, &body)?;
+        }
+        ("POST", "/api/wizard/create") => {
+            let mut body = String::new();
+            reader.read_to_string(&mut body)?;
+            #[derive(serde::Deserialize)]
+            struct WizardReq {
+                game: String,
+                account_count: usize,
+                layout: String,
+            }
+            match serde_json::from_str::<WizardReq>(&body) {
+                Ok(req) => {
+                    let cfg = if req.game == "gw2" {
+                        gw2_template()
+                    } else {
+                        Config::template()
+                    };
+                    // Override account count and layout
+                    let mut new_cfg = cfg;
+                    new_cfg.accounts = (1..=req.account_count)
+                        .map(|i| crate::config::Account {
+                            name: format!("Account{}", i),
+                            game_profile: new_cfg.game_profiles[0].name.clone(),
+                            extra_args: None,
+                        })
+                        .collect();
+                    // Layout adjustment
+                    if req.layout == "single" {
+                        new_cfg.layout = crate::config::Layout {
+                            name: "single".to_string(),
+                            regions: vec![crate::config::Region {
+                                name: "fullscreen".to_string(),
+                                x: 0,
+                                y: 0,
+                                width: 1920,
+                                height: 1080,
+                            }],
+                        };
+                        new_cfg.team.slots = vec![crate::config::Slot {
+                            index: 1,
+                            account: "Account1".to_string(),
+                            region: "fullscreen".to_string(),
+                        }];
+                    } else if req.layout == "grid1x4" {
+                        let mon_w = new_cfg.layout.regions[0].width * 4;
+                        let mon_h = new_cfg.layout.regions[0].height;
+                        new_cfg.layout.regions = (0..4)
+                            .map(|i| crate::config::Region {
+                                name: format!("r{}", i + 1),
+                                x: i * mon_w / 4,
+                                y: 0,
+                                width: mon_w / 4,
+                                height: mon_h,
+                            })
+                            .collect();
+                        new_cfg.team.slots = (0..4)
+                            .map(|i| crate::config::Slot {
+                                index: i + 1,
+                                account: format!("Account{}", i + 1),
+                                region: format!("r{}", i + 1),
+                            })
+                            .collect();
+                    } else if req.layout == "grid4x1" {
+                        let mon_w = new_cfg.layout.regions[0].width;
+                        let mon_h = new_cfg.layout.regions[0].height * 4;
+                        new_cfg.layout.regions = (0..4)
+                            .map(|i| crate::config::Region {
+                                name: format!("r{}", i + 1),
+                                x: 0,
+                                y: i * mon_h / 4,
+                                width: mon_w,
+                                height: mon_h / 4,
+                            })
+                            .collect();
+                        new_cfg.team.slots = (0..4)
+                            .map(|i| crate::config::Slot {
+                                index: i + 1,
+                                account: format!("Account{}", i + 1),
+                                region: format!("r{}", i + 1),
+                            })
+                            .collect();
+                    }
+                    // Save and respond
+                    if let Err(e) = crate::config::resolve(&new_cfg) {
+                        let resp = format!(
+                            r#"{{"ok":false,"error":"{}"}}"#,
+                            e.to_string().replace('"', "\\\"")
+                        );
+                        respond_json(&mut stream, 400, &resp)?;
+                    } else if let Err(e) = new_cfg.save(&config_path) {
+                        let resp = format!(
+                            r#"{{"ok":false,"error":"{}"}}"#,
+                            e.to_string().replace('"', "\\\"")
+                        );
+                        respond_json(&mut stream, 500, &resp)?;
+                    } else {
+                        let mut guard = state.lock().unwrap();
+                        guard.config = new_cfg.clone();
+                        guard.last_error = None;
+                        let body = serde_json::to_string(
+                            &serde_json::json!({"ok": true, "config": new_cfg}),
+                        )?;
+                        respond_json(&mut stream, 200, &body)?;
+                    }
+                }
+                Err(e) => {
+                    let resp = format!(
+                        r#"{{"ok":false,"error":"JSON parse: {}"}}"#,
+                        e.to_string().replace('"', "\\\"")
+                    );
+                    respond_json(&mut stream, 400, &resp)?;
+                }
+            }
         }
         ("POST", "/api/config") => {
             let mut body = String::new();

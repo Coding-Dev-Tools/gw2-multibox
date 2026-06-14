@@ -56,6 +56,33 @@ pub fn find_primary_by_pid(target_pid: DWORD) -> Option<WindowInfo> {
     find_by_pid(target_pid).into_iter().next()
 }
 
+pub fn get_window_rect(hwnd: HWND) -> Option<(i32, i32, i32, i32)> {
+    unsafe {
+        let mut rect = winapi::shared::windef::RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        if GetWindowRect(hwnd, &mut rect) != 0 {
+            Some((rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top))
+        } else {
+            None
+        }
+    }
+}
+
+pub fn list_all_windows_with_rect() -> Vec<(WindowInfo, (i32, i32, i32, i32))> {
+    list_all_visible()
+        .into_iter()
+        .filter_map(|w| {
+            get_window_rect(w.hwnd).map(|r| (w, r))
+        })
+        .collect()
+}
+
+pub fn find_windows_by_title_pattern(pattern: &str) -> Vec<(WindowInfo, (i32, i32, i32, i32))> {
+    list_all_windows_with_rect()
+        .into_iter()
+        .filter(|(w, _)| w.title.to_lowercase().contains(&pattern.to_lowercase()))
+        .collect()
+}
+
 /// Position a window at the given region.
 ///
 /// # Safety

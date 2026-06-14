@@ -4,6 +4,9 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use winapi::shared::minwindef::*;
+use winapi::um::winnt::*;
+use winapi::um::winreg::*;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct GameProfile {
@@ -239,6 +242,224 @@ pub fn check_exe_paths(config: &Config) -> Vec<String> {
         }
     }
     warnings
+}
+
+/// Auto-detect Guild Wars 2 install path from registry and common locations.
+pub fn detect_gw2_path() -> Option<String> {
+    // 1. Check registry (Steam/standalone installs)
+    if let Some(path) = read_gw2_from_registry() {
+        return Some(path);
+    }
+
+    // 2. Check common install locations
+    let common_paths = [
+        r"C:\Program Files\Guild Wars 2\Gw2-64.exe",
+        r"C:\Program Files (x86)\Guild Wars 2\Gw2-64.exe",
+        r"C:\Games\Guild Wars 2\Gw2-64.exe",
+        r"D:\Games\Guild Wars 2\Gw2-64.exe",
+        r"E:\Games\Guild Wars 2\Gw2-64.exe",
+    ];
+    for p in &common_paths {
+        if PathBuf::from(p).exists() {
+            return Some(p.to_string());
+        }
+    }
+
+    None
+}
+
+fn read_gw2_from_registry() -> Option<String> {
+    unsafe {
+        let hklm = HKEY_LOCAL_MACHINE;
+        // Try Steam registry path
+        let steam_paths = [
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Steam App 1284210",
+            r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Steam App 1284210",
+        ];
+        for subkey in &steam_paths {
+            let mut hkey: HKEY = std::ptr::null_mut();
+            if RegOpenKeyExW(hklm, to_wide(subkey).as_ptr(), 0, KEY_READ, &mut hkey) == 0 {
+                let mut buf = [0u16; 512];
+                let mut len = buf.len() as u32 * 2;
+                let mut typ = 0;
+                if RegGetValueW(
+                    hkey,
+                    std::ptr::null(),
+                    to_wide("InstallLocation").as_ptr(),
+                    RRF_RT_REG_SZ,
+                    &mut typ,
+                    buf.as_mut_ptr() as *mut _,
+                    &mut len,
+                ) == 0
+                {
+                    RegCloseKey(hkey);
+                    let loc = String::from_utf16_lossy(&buf)
+                        .trim_end_matches('\0')
+                        .to_string();
+                    let exe = PathBuf::from(loc).join("Gw2-64.exe");
+                    if exe.exists() {
+                        return Some(exe.to_string_lossy().to_string());
+                    }
+                }
+                RegCloseKey(hkey);
+            }
+        }
+
+        // Try ArenaNet/Guild Wars 2 registry
+        let anet_paths = [
+            r"SOFTWARE\ArenaNet\Guild Wars 2",
+            r"SOFTWARE\WOW6432Node\ArenaNet\Guild Wars 2",
+        ];
+        for subkey in &anet_paths {
+            let mut hkey: HKEY = std::ptr::null_mut();
+            if RegOpenKeyExW(hklm, to_wide(subkey).as_ptr(), 0, KEY_READ, &mut hkey) == 0 {
+                let mut buf = [0u16; 512];
+                let mut len = buf.len() as u32 * 2;
+                let mut typ = 0;
+                if RegGetValueW(
+                    hkey,
+                    std::ptr::null(),
+                    to_wide("InstallPath").as_ptr(),
+                    RRF_RT_REG_SZ,
+                    &mut typ,
+                    buf.as_mut_ptr() as *mut _,
+                    &mut len,
+                ) == 0
+                {
+                    RegCloseKey(hkey);
+                    let loc = String::from_utf16_lossy(&buf)
+                        .trim_end_matches('\0')
+                        .to_string();
+                    let exe = PathBuf::from(loc).join("Gw2-64.exe");
+                    if exe.exists() {
+                        return Some(exe.to_string_lossy().to_string());
+                    }
+                }
+                RegCloseKey(hkey);
+            }
+        }
+    }
+    None
+}
+
+fn to_wide(s: &str) -> Vec<u16> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    OsStr::new(s).encode_wide().chain(Some(0)).collect()
+}
+
+/// Generate a GW2-optimized starter config with auto-detected path and 4-account layout.
+pub fn gw2_template() -> Config {
+    let exe_path =
+        detect_gw2_path().unwrap_or_else(|| r"C:\Games\Guild Wars 2\Gw2-64.exe".to_string());
+
+    // Get monitor info for smart layout
+    let (mon_w, mon_h) = get_primary_monitor_size();
+    let (region_w, region_h) = (mon_w / 2, mon_h / 2);
+
+    Config {
+        game_profiles: vec![GameProfile {
+            name: "gw2".to_string(),
+            exe_path,
+            args: vec!["-shareArchive".to_string()],
+            working_dir: None,
+            window_ready_delay_ms: Some(5000),
+        }],
+        accounts: vec![
+            Account {
+                name: "Account1".to_string(),
+                game_profile: "gw2".to_string(),
+                extra_args: None,
+            },
+            Account {
+                name: "Account2".to_string(),
+                game_profile: "gw2".to_string(),
+                extra_args: None,
+            },
+            Account {
+                name: "Account3".to_string(),
+                game_profile: "gw2".to_string(),
+                extra_args: None,
+            },
+            Account {
+                name: "Account4".to_string(),
+                game_profile: "gw2".to_string(),
+                extra_args: None,
+            },
+        ],
+        layout: Layout {
+            name: "2x2-grid".to_string(),
+            regions: vec![
+                Region {
+                    name: "tl".to_string(),
+                    x: 0,
+                    y: 0,
+                    width: region_w as i32,
+                    height: region_h as i32,
+                },
+                Region {
+                    name: "tr".to_string(),
+                    x: region_w as i32,
+                    y: 0,
+                    width: region_w as i32,
+                    height: region_h as i32,
+                },
+                Region {
+                    name: "bl".to_string(),
+                    x: 0,
+                    y: region_h as i32,
+                    width: region_w as i32,
+                    height: region_h as i32,
+                },
+                Region {
+                    name: "br".to_string(),
+                    x: region_w as i32,
+                    y: region_h as i32,
+                    width: region_w as i32,
+                    height: region_h as i32,
+                },
+            ],
+        },
+        team: Team {
+            name: "4box".to_string(),
+            slots: vec![
+                Slot {
+                    index: 1,
+                    account: "Account1".to_string(),
+                    region: "tl".to_string(),
+                },
+                Slot {
+                    index: 2,
+                    account: "Account2".to_string(),
+                    region: "tr".to_string(),
+                },
+                Slot {
+                    index: 3,
+                    account: "Account3".to_string(),
+                    region: "bl".to_string(),
+                },
+                Slot {
+                    index: 4,
+                    account: "Account4".to_string(),
+                    region: "br".to_string(),
+                },
+            ],
+            options: TeamOptions {
+                stagger_delay_ms: Some(3000),
+                window_timeout_ms: Some(60000),
+            },
+        },
+    }
+}
+
+fn get_primary_monitor_size() -> (u32, u32) {
+    unsafe {
+        let hdc = winapi::um::winuser::GetDC(std::ptr::null_mut());
+        let w = winapi::um::wingdi::GetDeviceCaps(hdc, winapi::um::wingdi::HORZRES);
+        let h = winapi::um::wingdi::GetDeviceCaps(hdc, winapi::um::wingdi::VERTRES);
+        winapi::um::winuser::ReleaseDC(std::ptr::null_mut(), hdc);
+        (w.max(1920) as u32, h.max(1080) as u32)
+    }
 }
 
 #[cfg(test)]

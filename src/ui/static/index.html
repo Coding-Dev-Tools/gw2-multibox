@@ -12,6 +12,57 @@
     <p class="tagline">Multiboxing launcher & window manager</p>
   </header>
 
+  <!-- First-run wizard modal -->
+  <div id="wizard" class="modal hidden">
+    <div class="modal-content">
+      <div class="wizard-step" data-step="1">
+        <h2>Welcome to Multisbox</h2>
+        <p>Let's set up your multiboxing config in 3 quick steps.</p>
+        <button class="primary" data-next="2">Get Started</button>
+      </div>
+      <div class="wizard-step hidden" data-step="2">
+        <h2>Choose Your Game</h2>
+        <p>We'll auto-detect Guild Wars 2. For other games, pick "Custom" and browse.</p>
+        <div class="game-options">
+          <label class="game-option">
+            <input type="radio" name="game" value="gw2" checked>
+            <span class="game-name">Guild Wars 2</span>
+            <span class="game-desc">Auto-detect path, 4 accounts, 2x2 grid, -shareArchive</span>
+          </label>
+          <label class="game-option">
+            <input type="radio" name="game" value="custom">
+            <span class="game-name">Custom Game</span>
+            <span class="game-desc">Manual exe path, your own layout</span>
+          </label>
+        </div>
+        <div id="custom-game-fields" class="hidden">
+          <label>Exe path <input type="text" id="custom-exe" placeholder="C:\Games\MyGame\game.exe"></label>
+          <label>Args (space-separated) <input type="text" id="custom-args" placeholder="-windowed -novid"></label>
+        </div>
+        <button class="primary" data-prev="1">Back</button>
+        <button class="primary" data-next="3">Next</button>
+      </div>
+      <div class="wizard-step hidden" data-step="3">
+        <h2>Accounts & Layout</h2>
+        <p>How many accounts? We'll create a 2x2 grid on your primary monitor.</p>
+        <label>Account count (1-8) <input type="number" id="account-count" value="4" min="1" max="8"></label>
+        <label>Layout <select id="layout-type">
+          <option value="grid2x2">2×2 Grid (4 regions)</option>
+          <option value="grid1x4">1×4 Horizontal (4 regions)</option>
+          <option value="grid4x1">4×1 Vertical (4 regions)</option>
+          <option value="single">Single Window</option>
+        </select></label>
+        <button class="primary" data-prev="2">Back</button>
+        <button class="primary" id="wizard-create">Create Config</button>
+      </div>
+      <div class="wizard-step hidden" data-step="4">
+        <h2>Done!</h2>
+        <p>Your config is ready. You can now launch or tweak settings.</p>
+        <button class="primary" id="wizard-finish">Open Editor</button>
+      </div>
+    </div>
+  </div>
+
   <nav>
     <button class="tab-btn active" data-tab="team">Team</button>
     <button class="tab-btn" data-tab="layout">Layout</button>

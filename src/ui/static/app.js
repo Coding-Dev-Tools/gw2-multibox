@@ -27,11 +27,75 @@ function switchTab(name) {
   $$('.tab').forEach(s => s.classList.toggle('active', s.id === 'tab-' + name));
 }
 
-async function loadConfig() {
-  const r = await fetch('/api/config');
-  config = await r.json();
-  render();
-  $('raw-json').value = JSON.stringify(config, null, 2);
+// --- Wizard logic ---
+let wizardStep = 1;
+let wizardGame = 'gw2';
+let wizardAccountCount = 4;
+let wizardLayout = 'grid2x2';
+
+function showWizardStep(step) {
+  $$('.wizard-step').forEach(s => s.classList.add('hidden'));
+  $(`.wizard-step[data-step="${step}"]`)?.classList?.remove('hidden');
+  wizardStep = step;
+}
+
+function showWizard() {
+  $('wizard').classList.remove('hidden');
+  showWizardStep(1);
+}
+
+function hideWizard() {
+  $('wizard').classList.add('hidden');
+}
+
+function handleWizardNext() {
+  if (wizardStep === 1) {
+    showWizardStep(2);
+  } else if (wizardStep === 2) {
+    wizardGame = $$('input[name="game"]:checked')[0]?.value || 'gw2';
+    showWizardStep(3);
+  } else if (wizardStep === 3) {
+    wizardAccountCount = parseInt($('account-count')?.value || '4', 10);
+    wizardLayout = $('layout-type')?.value || 'grid2x2';
+    createWizardConfig();
+    showWizardStep(4);
+  }
+}
+
+function handleWizardPrev() {
+  if (wizardStep > 1) showWizardStep(wizardStep - 1);
+}
+
+async function createWizardConfig() {
+  const body = {
+    game: wizardGame,
+    accountCount: wizardAccountCount,
+    layout: wizardLayout
+  };
+  const r = await fetch('/api/wizard/create', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const resp = await r.json();
+  if (resp.ok) {
+    config = resp.config;
+    render();
+    $('raw-json').value = JSON.stringify(config, null, 2);
+    showStatus('Config created from wizard!', 'ok');
+  } else {
+    showStatus('Failed: ' + resp.error, 'err');
+  }
+}
+
+function handleCustomGameToggle() {
+  const isCustom = $$('input[name="game"]:checked')[0]?.value === 'custom';
+  $('custom-game-fields')?.classList?.toggle('hidden', !isCustom);
+}
+
+function handleWizardFinish() {
+  hideWizard();
+  switchTab('team');
 }
 
 async function save() {
@@ -299,4 +363,24 @@ $('reload').addEventListener('click', loadConfig);
 });
 
 // Boot
-loadConfig().catch(e => showStatus('Load failed: ' + e.message, 'err'));
+loadConfig().then(() => {
+  // Show wizard if config is minimal/empty
+  const hasRealConfig = config?.game_profiles?.length > 0 &&
+    config?.accounts?.length > 0 &&
+    config?.team?.slots?.length > 0;
+  if (!hasRealConfig) {
+    showWizard();
+  }
+}).catch(e => showStatus('Load failed: ' + e.message, 'err'));
+
+// Wizard event listeners
+document.addEventListener('click', e => {
+  if (e.target.matches('[data-next]')) handleWizardNext();
+  if (e.target.matches('[data-prev]')) handleWizardPrev();
+  if (e.target.id === 'wizard-create') handleWizardNext();
+  if (e.target.id === 'wizard-finish') handleWizardFinish();
+});
+
+document.addEventListener('change', e => {
+  if (e.target.matches('input[name="game"]')) handleCustomGameToggle();
+});

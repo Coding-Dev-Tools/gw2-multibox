@@ -17,4 +17,7 @@ pub mod launcher;
 pub mod log;
 pub mod window;
 
-pub use config::{Account, Config, GameProfile, Layout, Region, Slot, Team, TeamOptions};
+pub use config::{
+    Account, Config, GameProfile, Layout, Region, Slot, Team, TeamOptions, detect_gw2_path,
+    gw2_template,
+};

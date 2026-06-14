@@ -28,6 +28,8 @@ enum Mode {
     ListWindows,
     Ui,
     Init,
+    Gw2Init,
+    CaptureLayout,
     Help,
     Version,
 }
@@ -53,6 +55,7 @@ fn parse_args() -> Result<Args> {
             "--list-windows" => mode = Mode::ListWindows,
             "--ui" => mode = Mode::Ui,
             "init" => mode = Mode::Init,
+            "gw2-init" => mode = Mode::Gw2Init,
             "--debug" => debug = true,
             "--ui-port" => {
                 // Handled below
@@ -92,7 +95,8 @@ fn print_help() {
     );
     println!("USAGE:");
     println!("    multisbox [OPTIONS]");
-    println!("    multisbox init [-c PATH]\n");
+    println!("    multisbox init [-c PATH]");
+    println!("    multisbox gw2-init [-c PATH]\n");
     println!("OPTIONS:");
     println!("    -c, --config <PATH>    Config YAML file [default: config.yaml]");
     println!("        --dry-run          Validate config and print launch plan, then exit");
@@ -104,7 +108,10 @@ fn print_help() {
     println!("    -v, --version          Print version");
     println!();
     println!("SUBCOMMANDS:");
-    println!("    init            Write a starter config to PATH (or config.yaml) and exit");
+    println!("    init         Write a generic starter config to PATH (or config.yaml) and exit");
+    println!(
+        "    gw2-init     Write a GW2-optimized config (auto-detects install, 4 accounts, 2x2 grid)"
+    );
     println!();
     println!("MODES:");
     println!(
@@ -115,11 +122,11 @@ fn print_help() {
     println!("    --ui         Serve the config editor on http://127.0.0.1:7878 (no launching)");
     println!();
     println!("EXAMPLES:");
-    println!("    multisbox init");
-    println!("    multisbox init -c my-team.yaml");
-    println!("    multisbox -c my-team.yaml --dry-run");
+    println!("    multisbox gw2-init              # One-click GW2 setup");
+    println!("    multisbox gw2-init -c my.yaml   # Custom path");
+    println!("    multisbox -c config.yaml --dry-run");
     println!("    multisbox --ui --ui-port 9000");
-    println!("    multisbox -c my-team.yaml");
+    println!("    multisbox -c config.yaml");
 }
 
 fn run_list_windows() -> Result<()> {
@@ -213,6 +220,43 @@ fn run_init(config_path: &PathBuf) -> Result<()> {
         config_path
     );
     println!("  3. Run `multisbox -c {:?}` to launch", config_path);
+    Ok(())
+}
+
+fn run_gw2_init(config_path: &PathBuf) -> Result<()> {
+    if config_path.exists() {
+        eprintln!(
+            "Refusing to overwrite existing file: {:?}\n\
+             Use a different path with -c, or delete the file first.",
+            config_path
+        );
+        std::process::exit(2);
+    }
+    let cfg = config::gw2_template();
+    cfg.save(config_path)?;
+    println!("✓ GW2 config written to {:?}", config_path);
+    println!();
+    println!("Auto-detected:");
+    println!("  Game path: {}", cfg.game_profiles[0].exe_path);
+    println!(
+        "  Layout:    {} ({} regions)",
+        cfg.layout.name,
+        cfg.layout.regions.len()
+    );
+    println!("  Accounts:  {}", cfg.accounts.len());
+    println!();
+    println!("Next steps:");
+    println!("  1. (Optional) Edit account names in config if different");
+    println!(
+        "  2. Run `multisbox -c {:?} --dry-run` to validate",
+        config_path
+    );
+    println!(
+        "  3. Run `multisbox -c {:?}` to launch 4 GW2 windows",
+        config_path
+    );
+    println!();
+    println!("Hotkeys: F1=Account1, F2=Account2, F3=Account3, F4=Account4");
     Ok(())
 }
 
@@ -404,6 +448,7 @@ fn main() -> Result<()> {
         Mode::ListWindows => run_list_windows(),
         Mode::Ui => run_ui(args.config_path, args.ui_port),
         Mode::Init => run_init(&args.config_path),
+        Mode::Gw2Init => run_gw2_init(&args.config_path),
         Mode::Help | Mode::Version => Ok(()), // handled above
     }
 }
