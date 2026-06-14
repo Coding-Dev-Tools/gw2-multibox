@@ -1,5 +1,6 @@
 # Rust
 /target
+**/target/
 **/*.rs.bk
 Cargo.lock.bak
 
@@ -17,7 +18,7 @@ Thumbs.db
 test_output.txt
 test_err.txt
 
-# Merge artifacts and cache (added by workspace stabilization)
+# Merge artifacts and cache
 __pycache__/
 *.pyc
 *.pyo
@@ -35,3 +36,48 @@ build/
 *.REMOTE.*
 local.db
 *.sqlite3
+
+# ---------------------------------------------------------------------------
+# gw2-multibox specific ignores
+# ---------------------------------------------------------------------------
+
+# Vendored third-party source — referenced from the code but never built
+# in-repo. Keep the empty directory marker; do not commit the contents.
+# To re-vendor: extract tools/gw2launcher-source.zip into this path.
+/tools/gw2launcher-src/
+
+# Source archive (binary)
+/tools/gw2launcher-source.zip
+
+# Build outputs
+*.exe
+*.dll
+*.pdb
+*.lib
+*.a
+*.exp
+
+# Cargo build outputs (covered by /target above, but lock down nested cases)
+**/deps/
+**/.fingerprint/
+**/incremental/
+**/build/
+
+# Personal-environment / machine-specific scripts
+# (these reference hardcoded paths like C:\Program Files\Guild Wars 2
+#  and the user's ISBoxer/InnerSpace workflow — not useful to repo consumers)
+*.ps1
+*.bat
+/SETUP.bat
+/finish_copy.ps1
+/copy_archives_to_e.ps1
+/check_sta.ps1
+/fix_inner_space.ps1
+/fix_inner_space_ssl.ps1
+/reinstall_innerspace.ps1
+/launch_*.ps1
+/launch_*.bat
+/install_*.ps1
+/remove_pai_cert.ps1
+/patch_gw2launcher.ps1
+/setup_*.ps1
