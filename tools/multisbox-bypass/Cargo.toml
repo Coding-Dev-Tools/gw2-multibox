@@ -1,0 +1,31 @@
+# Multisbox Mutex Bypass DLL — SUPERSEDED
+#
+# This crate is retained as a stub for historical reference only.
+# The mutex-bypass technique has been reimplemented as an external
+# process in `src/mutex_kill.rs` of the main `gw2-multibox` binary,
+# using the same approach as Healix/Gw2Launcher's `ProcessUtil`
+# (NtQuerySystemInformation + NtQueryObject + DuplicateHandle with
+# DUPLICATE_CLOSE_SOURCE). No DLL injection is performed; no second
+# binary is required.
+#
+# To remove this crate entirely: delete `tools/multisbox-bypass/`
+# and remove any references from `.github/workflows/*.yml` (none
+# currently exist — verified).
+#
+# The original DLL design was:
+# - Injected into Gw2-64.exe via CreateProcess CREATE_SUSPENDED
+# - IAT-hooked CreateMutexW and CreateMutexExW to return NULL
+# - This told the game the mutex couldn't be created, allowing
+#   multiple instances.
+# Drawbacks vs. the external approach: AV heuristics on
+# CREATE_SUSPENDED+LoadLibrary, needs 32-bit helper, requires the
+# extra binary to be staged to disk before launch.
+
+[package]
+name = "multisbox-bypass"
+version = "0.1.0"
+edition = "2024"
+crate-type = ["cdylib"]
+
+[dependencies]
+winapi = { version = "0.3.9", features = ["winuser", "minwindef", "winnt", "processthreadsapi"] }

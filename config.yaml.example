@@ -1,0 +1,67 @@
+# Multisbox Configuration Example
+# Copy this file to config.yaml and customize for your setup
+
+game_profiles:
+  - name: gw2
+    exe_path: "C:/Program Files/Guild Wars 2/Gw2-64.exe"
+    args: ["-shareArchive"]
+    working_dir: null
+    window_ready_delay_ms: 5000
+
+accounts:
+  - name: Account1
+    game_profile: gw2
+  - name: Account2
+    game_profile: gw2
+  - name: Account3
+    game_profile: gw2
+  - name: Account4
+    game_profile: gw2
+
+layout:
+  name: "2x2-grid"
+  regions:
+    - name: tl
+      x: 0
+      y: 0
+      width: 960
+      height: 540
+    - name: tr
+      x: 960
+      y: 0
+      width: 960
+      height: 540
+    - name: bl
+      x: 0
+      y: 540
+      width: 960
+      height: 540
+    - name: br
+      x: 960
+      y: 540
+      width: 960
+      height: 540
+
+team:
+  name: "4box"
+  slots:
+    - index: 1
+      account: Account1
+      region: tl
+    - index: 2
+      account: Account2
+      region: tr
+    - index: 3
+      account: Account3
+      region: bl
+    - index: 4
+      account: Account4
+      region: br
+  options:
+    stagger_delay_ms: 3000
+    window_timeout_ms: 60000
+
+broadcast:
+  enabled: false
+  keys: []
+  toggle_key: 0x78  # F9
