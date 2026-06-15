@@ -3,7 +3,16 @@
 ## [Unreleased]
 
 ### Added
-- Input Broadcasting (keyboard only, disabled by default, F9 toggle)
+- Input Broadcasting (keyboard only, ENABLED by default, F9 toggle)
+- `team.options.hotkey_base` config field (default 0x75 = F6). The
+  default skips F1-F5 so they remain available for the game's own
+  in-game hotkeys. Set to a lower value to use F1-F5 if your game
+  doesn't reserve them.
+- Broadcast toggle hotkey (F9 by default) is now actually registered
+  and toggles broadcasting on/off from the message loop
+- `junction` module: per-account Windows directory junctions via `mklink /J`
+- Sequential slot launch: wait for each slot's window to appear before
+  launching the next (improves archive-file compatibility for multi-instance)
 - System tray icon with context menu
 - Windows installer (NSIS)
 - Multi-monitor improvements (per-monitor DPI awareness)

@@ -135,18 +135,32 @@ Use `--debug` to enable debug-level logging (more verbose).
 game_profiles:
   - name: gw2
     exe_path: "C:/Games/Guild Wars 2/Gw2-64.exe"
-    args: ["-shareArchive"]
     working_dir: "C:/Games/Guild Wars 2"
+    kill_mutex: ANET-WIN32-MUTEX   # required for multi-instance
 ```
 
-The `-shareArchive` flag lets multiple instances share the asset cache.
-Multisbox **also** automatically closes GW2's instance mutex
-(`ANET-WIN32-MUTEX`) by walking the running process's handle table via
-`NtQuerySystemInformation` and calling `DuplicateHandle` with
-`DUPLICATE_CLOSE_SOURCE` — the same technique used by the popular
-third-party `Gw2Launcher` tool. This is process-external: no DLL is
-injected into the game. If the kill fails for any reason, the launch
-continues (the error is logged but not fatal).
+Guild Wars 2 enforces a single-instance check via the mutex
+`ANET-WIN32-MUTEX`. Multisbox closes that mutex in the running game
+process by walking the process handle table via `NtQuerySystemInformation`
+and calling `DuplicateHandle` with `DUPLICATE_CLOSE_SOURCE` — the same
+technique used by the popular third-party `Gw2Launcher` tool. This is
+process-external: no DLL is injected into the game. If the kill fails
+for any reason, the launch continues (the error is logged but not fatal).
+
+**Note on simultaneous multi-instance:** GW2 also opens its `Gw2.dat`
+archive with a non-shared handle, so even after the mutex is removed
+the second instance will fail to open `Gw2.dat` if the first instance
+is still running. Multisbox pre-opens `Gw2.dat` with
+`FILE_SHARE_READ|WRITE|DELETE` for the entire launch session
+(this is the same `FileLocker` pattern Gw2Launcher uses), and launches
+slots sequentially — each slot's window must be ready before the next
+slot is launched. With this combination, multi-instance launch works
+when `Gw2.dat` is opened by the game with `FILE_SHARE_READ`. If your
+game version opens `Gw2.dat` with no sharing flags, the only fully
+compatible solutions are: (1) per-account Windows user profiles, or
+(2) IAT-patched copies of the game EXE (the InnerSpace/ISBoxer
+virtual-files approach, which is outside the scope of this tool's
+Terms-of-Service constraints). See `docs/architecture.md` for details.
 
 To opt out of the mutex kill, set `kill_mutex: null` in your profile, or
 delete the line. The mutex kill only runs when `kill_mutex` is set to a

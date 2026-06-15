@@ -123,6 +123,66 @@ unsafe extern "system" fn enum_all_windows_for_pid_callback(hwnd: HWND, lparam: 
     }
 }
 
+/// Find all main (top-level, visible, with a title) windows owned by
+/// processes whose image name matches `process_name` (case-insensitive,
+/// without the .exe suffix). Returns one HWND per matching process,
+/// preferring the largest window for each PID (the main game window
+/// rather than splash or helper windows).
+///
+/// Uses the Toolhelp32 snapshot API to enumerate processes — works
+/// without needing PROCESS_QUERY_INFORMATION on every process.
+pub fn find_windows_by_process_name(process_name: &str) -> Vec<HWND> {
+    use winapi::um::handleapi::CloseHandle;
+    use winapi::um::tlhelp32::{Process32FirstW, Process32NextW, PROCESSENTRY32W};
+    use winapi::um::winnt::HANDLE;
+
+    let needle = process_name.to_ascii_lowercase();
+    let needle = needle.strip_suffix(".exe").unwrap_or(&needle).to_string();
+
+    unsafe {
+        let snap: HANDLE = winapi::um::tlhelp32::CreateToolhelp32Snapshot(
+            winapi::um::tlhelp32::TH32CS_SNAPPROCESS,
+            0,
+        );
+        if snap.is_null() {
+            return Vec::new();
+        }
+
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as DWORD;
+
+        let mut pids: Vec<DWORD> = Vec::new();
+        if Process32FirstW(snap, &mut entry) != 0 {
+            loop {
+                // szExeFile is a wide null-terminated string
+                let name_w = &entry.szExeFile;
+                let name_len = name_w
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(name_w.len());
+                let name = String::from_utf16_lossy(&name_w[..name_len]).to_ascii_lowercase();
+                let name_no_exe = name.strip_suffix(".exe").unwrap_or(&name).to_string();
+                if name_no_exe == needle {
+                    pids.push(entry.th32ProcessID);
+                }
+                if Process32NextW(snap, &mut entry) == 0 {
+                    break;
+                }
+            }
+        }
+        CloseHandle(snap);
+
+        // For each PID, find the main window (largest visible with title)
+        let mut results: Vec<HWND> = Vec::new();
+        for pid in pids {
+            if let Some(info) = find_primary_by_pid(pid) {
+                results.push(info.hwnd);
+            }
+        }
+        results
+    }
+}
+
 /// Returns the first window for `target_pid` with a non-empty
 /// bounding rectangle, falling back to ANY top-level window owned by
 /// that pid. Prefers larger windows (skips tiny utility windows

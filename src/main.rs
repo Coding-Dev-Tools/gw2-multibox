@@ -132,7 +132,7 @@ fn print_help() {
     println!();
     println!("MODES:");
     println!(
-        "    (default)    Launch instances from config, position windows, register F1-FN hotkeys"
+        "    (default)    Launch instances from config, position windows, register F6+ hotkeys"
     );
     println!("    --dry-run    Validate config, print what would happen, exit");
     println!("    --list-windows  Print all visible top-level windows (debug aid)");
@@ -566,6 +566,104 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
         // Direct mode: launch each slot's exe and find by PID
         // (file_lock is already held from the top of run_live)
 
+        // Per-account user data: build a junction at the standard
+        // GW2 appdata path pointing to a per-account folder, for each
+        // account. This is the same technique Gw2Launcher uses — it
+        // gives each account its own Local.dat, GFXSettings.xml,
+        // screenshots, and addons, while sharing the read-only
+        // C:\Program Files\Guild Wars 2 directory.
+        //
+        // The junction is created ONCE before the loop and points at
+        // the LAST account's folder. For multi-instance, only one
+        // account's data can be active at the standard path at a time
+        // (Windows junctions are not multi-target). The Gw2Launcher
+        // model is: launch one account, when it closes swap the
+        // junction to the next, etc.
+        let standard_appdata = std::env::var("APPDATA")
+            .map(|p| std::path::PathBuf::from(p).join("Guild Wars 2"))
+            .unwrap_or_else(|_| {
+                std::path::PathBuf::from(r"C:\Users\home\AppData\Roaming\Guild Wars 2")
+            });
+        let multibox_data_root = std::env::var("LOCALAPPDATA")
+            .map(|p| std::path::PathBuf::from(p).join("Multisbox").join("data"))
+            .unwrap_or_else(|_| std::path::PathBuf::from(r"C:\Users\home\AppData\Local\Multisbox\data"));
+
+        let mut junctions_created: Vec<(std::path::PathBuf, std::path::PathBuf)> = Vec::new();
+        for slot in &config.team.slots {
+            let _account = resolved.accounts.get(slot.account.as_str()).unwrap();
+            let profile = resolved.slot_to_profile[&slot.index];
+            // Only set up junctions for GW2-like profiles (those with
+            // a kill_mutex set, indicating they need per-account data).
+            if profile.kill_mutex.is_none() {
+                continue;
+            }
+            let per_account = multibox_data_root.join(&slot.account);
+            if let Err(e) = std::fs::create_dir_all(&per_account) {
+                log::warn(&format!(
+                    "Could not create per-account dir {}: {}",
+                    per_account.display(),
+                    e
+                ));
+                continue;
+            }
+            // Track so we can clean up at the end.
+            junctions_created.push((standard_appdata.clone(), per_account.clone()));
+            // For multi-instance under a single user, only the LAST
+            // account's junction is active. Document this and don't
+            // try to swap during the loop (would require closing
+            // accounts sequentially).
+            log::info(&format!(
+                "Per-account data dir for {}: {}",
+                slot.account,
+                per_account.display()
+            ));
+        }
+        if !junctions_created.is_empty() {
+            let (last_link, last_target) = junctions_created.last().unwrap().clone();
+            // Remove the existing standard path (only if it's empty
+            // or already a junction — never delete user data).
+            if last_link.exists() {
+                // Try removing as a junction first (rmdir on a junction
+                // removes the junction without touching the target).
+                let remove_result = gw2_multibox::junction::remove_junction(&last_link);
+                if remove_result.is_err() {
+                    // Not a junction or rmdir failed. Check if empty
+                    // and only then remove the real directory.
+                    let is_empty = std::fs::read_dir(&last_link)
+                        .map(|mut d| d.next().is_none())
+                        .unwrap_or(false);
+                    if is_empty {
+                        let _ = std::fs::remove_dir(&last_link);
+                    } else {
+                        log::warn(&format!(
+                            "Standard appdata path {} is not empty and not a junction; not modifying",
+                            last_link.display()
+                        ));
+                    }
+                }
+            }
+            match gw2_multibox::junction::create_junction(&last_link, &last_target) {
+                Ok(()) => {
+                    println!(
+                        "Per-account data: junction at {} -> {}",
+                        last_link.display(),
+                        last_target.display()
+                    );
+                    log::info(&format!(
+                        "Junction created: {} -> {}",
+                        last_link.display(),
+                        last_target.display()
+                    ));
+                }
+                Err(e) => {
+                    log::warn(&format!(
+                        "Could not create per-account junction: {} (continuing without)",
+                        e
+                    ));
+                }
+            }
+        }
+
         let mut pids: Vec<DWORD> = Vec::new();
         for (i, slot) in config.team.slots.iter().enumerate() {
             let account = resolved.accounts.get(slot.account.as_str()).unwrap();
@@ -720,34 +818,94 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
 
     // Register hotkeys — only for windows we actually found
     let active_count = windows.len();
+    let hotkey_base = config
+        .team
+        .options
+        .hotkey_base
+        .unwrap_or_else(gw2_multibox::config::default_hotkey_base);
     let mut hkm = hotkey::HotkeyManager::new();
-    hkm.register(active_count)?;
+    hkm.register(active_count, hotkey_base)?;
+    if let Err(e) = hkm.register_broadcast_toggle(config.broadcast.toggle_key) {
+        eprintln!(
+            "Warning: could not register broadcast toggle (VK 0x{:X}): {}",
+            config.broadcast.toggle_key, e
+        );
+    }
     if active_count > 0 {
+        // Build a friendly label like F6, F7, F8 for the base VK
+        let label = |vk: u32| -> String {
+            if (0x70..0x7B).contains(&vk) {
+                format!("F{}", vk - 0x70 + 1)
+            } else {
+                format!("VK 0x{:X}", vk)
+            }
+        };
+        let first = label(hotkey_base);
+        let last = label(hotkey_base + active_count as u32 - 1);
         println!(
-            "\nHotkeys registered: F1..F{} to switch windows.",
-            active_count
+            "\nHotkeys registered: {}..{} to switch windows (F1-F5 are reserved for your game).",
+            first, last
         );
         println!("Press Ctrl+C to exit.\n");
     }
     log::info(&format!(
-        "Registered {} hotkeys (F1..F{})",
-        active_count, active_count
+        "Registered {} hotkeys (base VK 0x{:X})",
+        active_count, hotkey_base
     ));
 
     // Initialize input broadcasting
     let mut broadcast_mgr =
         broadcast::BroadcastManager::new(config.broadcast.clone(), windows.clone());
-    let _broadcast_toggle_key = config.broadcast.toggle_key;
+
+    // If the user specified a target process (e.g. "Gw2-64"), discover
+    // its windows and add them to the broadcast target list. This is
+    // the case when the multibox tool launched a launcher (like
+    // Gw2Launcher.exe) that spawns separate game processes the tool
+    // didn't directly start.
+    let mut target_windows: Vec<HWND> = windows.clone();
+    if let Some(proc) = &config.broadcast.target_process {
+        let discovered = window::find_windows_by_process_name(proc);
+        if !discovered.is_empty() {
+            println!(
+                "Broadcast: discovered {} '{}' window(s): {:?}",
+                discovered.len(),
+                proc,
+                discovered
+                    .iter()
+                    .map(|h| format!("{:x}", *h as usize))
+                    .collect::<Vec<_>>()
+            );
+            log::info(&format!(
+                "Broadcast: discovered {} '{}' window(s)",
+                discovered.len(),
+                proc
+            ));
+            target_windows = discovered;
+        } else {
+            log::warn(&format!(
+                "Broadcast: no '{}' process windows found yet (will retry when broadcasting is enabled)",
+                proc
+            ));
+        }
+    }
+    broadcast_mgr.update_windows(target_windows);
+
     if config.broadcast.enabled {
         if let Err(e) = broadcast_mgr.enable() {
             eprintln!("Warning: Failed to enable input broadcasting: {}", e);
             log::warn(&format!("Failed to enable broadcasting: {}", e));
         } else {
-            println!("Input broadcasting enabled (toggle: F9).");
+            println!(
+                "Input broadcasting enabled (toggle: VK 0x{:X}).",
+                config.broadcast.toggle_key
+            );
             log::info("Input broadcasting enabled");
         }
     } else {
-        println!("Input broadcasting disabled (press F9 to toggle).");
+        println!(
+            "Input broadcasting disabled (press VK 0x{:X} to toggle).",
+            config.broadcast.toggle_key
+        );
     }
 
     // Initialize tray icon
@@ -781,16 +939,55 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
 
     hotkey::run_loop(
         active_count,
-        |idx| {
-            if idx < windows.len() {
-                let hwnd = windows[idx];
-                if !hwnd.is_null() {
-                    unsafe {
-                        window::activate(hwnd);
+        |event| match event {
+            hotkey::HotkeyEvent::Slot(idx) => {
+                // Re-scan for new game windows each time a slot
+                // hotkey is pressed (covers the case where the user
+                // launched additional games via the Healix launcher
+                // and they weren't present at startup).
+                if let Some(proc) = &config.broadcast.target_process {
+                    let discovered = window::find_windows_by_process_name(proc);
+                    if !discovered.is_empty() {
+                        broadcast_mgr.update_windows(discovered);
                     }
-                    broadcast_mgr.set_active_slot(idx);
-                    println!("Switched to slot {}.", idx + 1);
-                    log::info(&format!("Switched to slot {}", idx + 1));
+                }
+                if idx < windows.len() {
+                    let hwnd = windows[idx];
+                    if !hwnd.is_null() {
+                        unsafe {
+                            window::activate(hwnd);
+                        }
+                        broadcast_mgr.set_active_slot(idx);
+                        println!("Switched to slot {}.", idx + 1);
+                        log::info(&format!("Switched to slot {}", idx + 1));
+                    }
+                }
+            }
+            hotkey::HotkeyEvent::BroadcastToggle => {
+                // Re-scan for target process windows each time F9 is
+                // pressed, so newly-launched games (via the Healix
+                // launcher) get picked up. F9 is the natural
+                // "refresh" hotkey.
+                if let Some(proc) = &config.broadcast.target_process {
+                    let discovered = window::find_windows_by_process_name(proc);
+                    if !discovered.is_empty() {
+                        println!(
+                            "Broadcast: refreshed, found {} '{}' window(s)",
+                            discovered.len(),
+                            proc
+                        );
+                        log::info(&format!(
+                            "Broadcast: refreshed, found {} '{}' window(s)",
+                            discovered.len(),
+                            proc
+                        ));
+                        broadcast_mgr.update_windows(discovered);
+                    }
+                }
+                match broadcast_mgr.toggle() {
+                    Ok(true) => println!("Input broadcasting: ON"),
+                    Ok(false) => println!("Input broadcasting: OFF"),
+                    Err(e) => eprintln!("Failed to toggle broadcasting: {}", e),
                 }
             }
         },

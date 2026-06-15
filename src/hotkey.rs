@@ -7,39 +7,77 @@ use winapi::shared::windef::HWND;
 use winapi::um::winuser::*;
 
 pub const HOTKEY_BASE_ID: i32 = 100;
-pub const VK_F1: u32 = 0x70;
+pub const BROADCAST_TOGGLE_ID: i32 = 200;
 
+/// Hotkey manager that registers window-switching hotkeys for slots
+/// plus an optional broadcast toggle hotkey.
 pub struct HotkeyManager {
-    count: usize,
+    slot_count: usize,
+    base_vk: u32,
+    broadcast_toggle_vk: Option<u32>,
 }
 
 impl HotkeyManager {
     pub fn new() -> Self {
-        Self { count: 0 }
+        Self {
+            slot_count: 0,
+            base_vk: 0x75, // F6 default
+            broadcast_toggle_vk: None,
+        }
     }
 
-    pub fn register(&mut self, slot_count: usize) -> Result<()> {
+    /// `base_vk` is the VK code for slot 1 (e.g. 0x75 = F6). Subsequent
+    /// slots use base_vk+1, base_vk+2, etc. The previous default of F1
+    /// (0x70) collided with GW2's own in-game hotkeys on F1-F5, so
+    /// callers should pass a base of F6 or higher unless the user has
+    /// explicitly opted in to lower keys.
+    pub fn register(&mut self, slot_count: usize, base_vk: u32) -> Result<()> {
         for i in 0..slot_count {
             unsafe {
-                let result =
-                    RegisterHotKey(0 as HWND, HOTKEY_BASE_ID + i as i32, 0, VK_F1 + i as UINT);
+                let result = RegisterHotKey(
+                    0 as HWND,
+                    HOTKEY_BASE_ID + i as i32,
+                    0,
+                    base_vk + i as UINT,
+                );
                 if result == 0 {
                     eprintln!(
-                        "Warning: Failed to register F{} hotkey (error {})",
+                        "Warning: Failed to register slot {} hotkey (VK 0x{:X}, error {})",
                         i + 1,
+                        base_vk + i as u32,
                         std::io::Error::last_os_error()
                     );
                 }
             }
         }
-        self.count = slot_count;
+        self.slot_count = slot_count;
+        self.base_vk = base_vk;
+        Ok(())
+    }
+
+    /// Register the broadcast toggle hotkey.
+    pub fn register_broadcast_toggle(&mut self, vk: u32) -> Result<()> {
+        unsafe {
+            let result = RegisterHotKey(0 as HWND, BROADCAST_TOGGLE_ID, 0, vk as UINT);
+            if result == 0 {
+                return Err(anyhow::anyhow!(
+                    "Failed to register broadcast toggle hotkey (VK 0x{:X}, error {})",
+                    vk,
+                    std::io::Error::last_os_error()
+                ));
+            }
+        }
+        self.broadcast_toggle_vk = Some(vk);
         Ok(())
     }
 
     pub fn unregister_all(&self) {
-        for i in 0..self.count {
-            unsafe {
+        unsafe {
+            for i in 0..self.slot_count {
                 UnregisterHotKey(0 as HWND, HOTKEY_BASE_ID + i as i32);
+            }
+            if self.broadcast_toggle_vk.is_some() {
+                UnregisterHotKey(0 as HWND, BROADCAST_TOGGLE_ID);
             }
         }
     }
@@ -57,27 +95,39 @@ impl Drop for HotkeyManager {
     }
 }
 
+/// Hotkey event kinds passed to the single run_loop callback.
+#[derive(Debug, Clone, Copy)]
+pub enum HotkeyEvent {
+    /// A slot hotkey was pressed (idx is 0-based).
+    Slot(usize),
+    /// The broadcast toggle hotkey was pressed.
+    BroadcastToggle,
+}
+
 /// Run the message loop and dispatch hotkey events to the callback.
-/// Returns when GetMessageW returns 0 (typically only on WM_QUIT).
-/// If `tray_hwnd` is provided, it is passed to GetMessageW so tray messages arrive.
-pub fn run_loop<F: FnMut(usize)>(slot_count: usize, mut on_hotkey: F, tray_hwnd: Option<HWND>) {
+/// The callback receives a [`HotkeyEvent`] for each registered hotkey.
+/// Using a single callback avoids the borrow-checker issue of trying
+/// to mutably borrow the same state from two FnMut closures.
+pub fn run_loop<F>(slot_count: usize, mut on_event: F, tray_hwnd: Option<HWND>)
+where
+    F: FnMut(HotkeyEvent),
+{
     unsafe {
         let mut msg: MSG = mem::zeroed();
-        let tray = tray_hwnd.unwrap_or(0 as HWND);
-        // GetMessageW with a specific HWND only retrieves messages for that window
-        // plus thread messages (hotkeys). We use 0 to get all thread messages
-        // and filter tray messages by hwnd.
+        let _ = tray_hwnd; // tray messages handled by WndProc
         while GetMessageW(&mut msg, 0 as HWND, 0, 0) != 0 {
             if msg.message == WM_HOTKEY {
-                let idx = (msg.wParam as i32).wrapping_sub(HOTKEY_BASE_ID) as usize;
-                if idx < slot_count {
-                    on_hotkey(idx);
+                let id = msg.wParam as i32;
+                if id >= HOTKEY_BASE_ID && id < HOTKEY_BASE_ID + slot_count as i32 {
+                    let idx = (id - HOTKEY_BASE_ID) as usize;
+                    if idx < slot_count {
+                        on_event(HotkeyEvent::Slot(idx));
+                    }
+                } else if id == BROADCAST_TOGGLE_ID {
+                    on_event(HotkeyEvent::BroadcastToggle);
                 }
             }
-            // Window messages (tray events etc.) are dispatched by DispatchMessageW
-            // to the window's WndProc automatically.
             DispatchMessageW(&msg);
-            let _ = tray; // tray messages handled by WndProc
         }
     }
 }

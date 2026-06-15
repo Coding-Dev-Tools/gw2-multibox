@@ -1,0 +1,35 @@
+game_profiles:
+- name: gw2-launcher
+  exe_path: C:\Program Files\Guild Wars 2\Gw2Launcher.exe
+  args: []
+  working_dir: C:\Program Files\Guild Wars 2
+  window_ready_delay_ms: 5000
+  kill_mutex: null
+accounts:
+- name: Launcher
+  game_profile: gw2-launcher
+  extra_args: null
+layout:
+  name: single-window
+  regions:
+  - name: full
+    x: 0
+    y: 0
+    width: 1720
+    height: 720
+team:
+  name: launcher
+  slots:
+  - index: 1
+    account: Launcher
+    region: full
+  options:
+    stagger_delay_ms: 0
+    window_timeout_ms: 60000
+    hotkey_base: 117  # F6 — F1-F5 reserved for game hotkeys
+broadcast:
+  enabled: true
+  keys: []
+  toggle_key: 120   # F9
+  target_process: Gw2-64
+named_layouts: []

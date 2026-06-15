@@ -75,13 +75,24 @@ pub struct TeamOptions {
     /// Window discovery timeout in milliseconds. Default: 60000
     #[serde(default)]
     pub window_timeout_ms: Option<u64>,
+    /// Base VK code for slot hotkeys. Default: 0x75 (F6).
+    /// Slot 1 = base, slot 2 = base+1, etc.
+    /// Set higher (e.g. 0x79 = F10) to avoid colliding with game hotkeys
+    /// on F1-F5.
+    #[serde(default)]
+    pub hotkey_base: Option<u32>,
+}
+
+pub fn default_hotkey_base() -> u32 {
+    // F6 = 0x75 — skip F1-F5 which are commonly used by games
+    0x75
 }
 
 /// Input broadcasting configuration.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct BroadcastConfig {
-    /// Whether broadcasting is enabled. Default: false
-    #[serde(default)]
+    /// Whether broadcasting is enabled. Default: true
+    #[serde(default = "default_broadcast_enabled")]
     pub enabled: bool,
     /// List of VK codes to forward. Empty = forward all except modifiers.
     #[serde(default)]
@@ -89,16 +100,28 @@ pub struct BroadcastConfig {
     /// Toggle key VK code. Default: 0x78 (F9)
     #[serde(default = "default_toggle_key")]
     pub toggle_key: u32,
+    /// If set, the broadcast manager will auto-discover windows of
+    /// processes with this name (e.g. "Gw2-64") and add them to the
+    /// target list. Use this when the launched EXE is a launcher
+    /// (e.g. Gw2Launcher.exe) that spawns separate game processes
+    /// the multibox tool doesn't directly know about.
+    #[serde(default)]
+    pub target_process: Option<String>,
 }
 
 impl Default for BroadcastConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: default_broadcast_enabled(),
             keys: vec![],
             toggle_key: default_toggle_key(),
+            target_process: None,
         }
     }
+}
+
+fn default_broadcast_enabled() -> bool {
+    true
 }
 
 fn default_toggle_key() -> u32 {
@@ -167,6 +190,7 @@ impl Config {
                 options: TeamOptions {
                     stagger_delay_ms: Some(3000),
                     window_timeout_ms: Some(60000),
+                    hotkey_base: None,
                 },
             },
             broadcast: BroadcastConfig::default(),
@@ -504,6 +528,7 @@ pub fn gw2_template() -> Config {
             options: TeamOptions {
                 stagger_delay_ms: Some(3000),
                 window_timeout_ms: Some(60000),
+                hotkey_base: None,
             },
         },
         broadcast: BroadcastConfig::default(),
@@ -745,14 +770,17 @@ pub fn wow_template() -> Config {
                     index: 4,
                     account: "Account4".to_string(),
                     region: "br".to_string(),
-                },
+                                },
             ],
             options: TeamOptions {
                 stagger_delay_ms: Some(5000),
                 window_timeout_ms: Some(120000),
+                hotkey_base: None,
             },
         },
         broadcast: BroadcastConfig::default(),
+
+
         named_layouts: vec![],
     }
 }
@@ -854,14 +882,17 @@ pub fn ffxiv_template() -> Config {
                     index: 4,
                     account: "Account4".to_string(),
                     region: "br".to_string(),
-                },
+                                },
             ],
             options: TeamOptions {
                 stagger_delay_ms: Some(5000),
                 window_timeout_ms: Some(120000),
+                hotkey_base: None,
             },
         },
         broadcast: BroadcastConfig::default(),
+
+
         named_layouts: vec![],
     }
 }
@@ -962,14 +993,17 @@ pub fn eve_template() -> Config {
                     index: 4,
                     account: "Account4".to_string(),
                     region: "br".to_string(),
-                },
+                                },
             ],
             options: TeamOptions {
                 stagger_delay_ms: Some(5000),
                 window_timeout_ms: Some(120000),
+                hotkey_base: None,
             },
         },
         broadcast: BroadcastConfig::default(),
+
+
         named_layouts: vec![],
     }
 }
@@ -1093,6 +1127,7 @@ mod tests {
         cfg.team.options = TeamOptions {
             stagger_delay_ms: Some(1500),
             window_timeout_ms: Some(20000),
+            hotkey_base: None,
         };
         assert_eq!(cfg.default_stagger_ms(), 1500);
         assert_eq!(cfg.default_timeout_ms(), 20000);
@@ -1184,5 +1219,25 @@ mod tests {
             cfg.game_profiles[0].kill_mutex.as_deref(),
             Some(crate::mutex_kill::GW2_MUTEX_NAME)
         );
+    }
+
+    #[test]
+    fn default_hotkey_base_skips_f1_through_f5() {
+        // F1=0x70, F5=0x74, F6=0x75. Default must be 0x75 or higher
+        // so we don't steal GW2's in-game F1-F5 hotkeys.
+        let base = default_hotkey_base();
+        assert!(
+            base >= 0x75,
+            "default hotkey base 0x{:X} is below F6 (0x75); would collide with game hotkeys",
+            base
+        );
+    }
+
+    #[test]
+    fn broadcast_default_is_enabled() {
+        // Broadcasting is opt-out (on by default) so the tool is
+        // useful out of the box; users can disable it in their YAML.
+        let cfg = BroadcastConfig::default();
+        assert!(cfg.enabled);
     }
 }

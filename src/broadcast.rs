@@ -15,7 +15,12 @@ use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use winapi::shared::minwindef::{LPARAM, LRESULT, WPARAM};
 use winapi::shared::windef::{HHOOK, HWND};
-use winapi::um::winuser::*;
+use winapi::um::winuser::{
+    CallNextHookEx, PostMessageW, SendInput, SetWindowsHookExW, UnhookWindowsHookEx,
+    KBDLLHOOKSTRUCT, KEYEVENTF_KEYUP, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_RCONTROL,
+    VK_RMENU, VK_RSHIFT, VK_RWIN, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN,
+    WM_SYSKEYUP,
+};
 
 use crate::config::BroadcastConfig;
 
@@ -225,10 +230,9 @@ unsafe extern "system" fn keyboard_hook_proc(
             let vk_code = kbd_struct.vkCode;
             let msg = w_param as u32;
 
-            // Don't forward modifier keys
-            if !MODIFIER_VKS.contains(&vk_code)
-                && let Some(hwnd) = get_active_window()
-            {
+            // Don't forward modifier keys (they're shared with the
+            // active slot's natural input)
+            if !MODIFIER_VKS.contains(&vk_code) {
                 let (key_down, key_up) = match msg {
                     WM_KEYDOWN => (true, false),
                     WM_KEYUP => (false, true),
@@ -238,15 +242,10 @@ unsafe extern "system" fn keyboard_hook_proc(
                 };
 
                 if key_down {
-                    let scan_code = kbd_struct.scanCode;
-                    let lparam = make_lparam(1, scan_code as u16, 0, 0, 0, 0);
-                    PostMessageW(hwnd, WM_KEYDOWN, vk_code as WPARAM, lparam as LPARAM);
+                    broadcast_key_event(vk_code, kbd_struct.scanCode, true);
                 }
-
                 if key_up {
-                    let scan_code = kbd_struct.scanCode;
-                    let lparam = make_lparam(1, scan_code as u16, 0, 0, 1, 1);
-                    PostMessageW(hwnd, WM_KEYUP, vk_code as WPARAM, lparam as LPARAM);
+                    broadcast_key_event(vk_code, kbd_struct.scanCode, false);
                 }
             }
         }
@@ -256,18 +255,56 @@ unsafe extern "system" fn keyboard_hook_proc(
     }
 }
 
-/// Get the active window handle from the static windows array.
-unsafe fn get_active_window() -> Option<HWND> {
+/// Forward a key event to all non-active slot windows using both
+/// PostMessageW and SendInput. PostMessageW handles games that read
+/// from the standard Windows message queue. SendInput handles games
+/// that use DirectInput or Raw Input (which GW2 uses) by synthesizing
+/// input at the OS level. Each target window gets a brief focus shift
+/// so SendInput is delivered to it.
+unsafe fn broadcast_key_event(vk_code: u32, scan_code: u32, key_down: bool) {
     unsafe {
-        let idx = STATE.active_slot.load(Ordering::SeqCst);
+        let active_idx = STATE.active_slot.load(Ordering::SeqCst);
         let windows = &*STATE.windows.get();
-        if idx < windows.len() {
-            let hwnd = windows[idx];
+        if windows.is_empty() {
+            return;
+        }
+
+        // Build the WM_KEYDOWN/UP lParam once
+        let (prev_state, trans_state) = if key_down { (0u8, 0u8) } else { (1u8, 1u8) };
+        let lparam =
+            make_lparam(1, scan_code as u16, 0, 0, prev_state, trans_state) as LPARAM;
+        let msg = if key_down { WM_KEYDOWN } else { WM_KEYUP };
+
+        // Build the SendInput keyboard event once. INPUT is a union
+        // with a 4-byte type discriminator; we need a properly aligned
+        // INPUT array, so we wrap the KEYBDINPUT in an INPUT.
+        let mut input: winapi::um::winuser::INPUT = std::mem::zeroed();
+        input.type_ = 1; // INPUT_KEYBOARD
+        let kbd = input.u.ki_mut();
+        kbd.wVk = vk_code as u16;
+        kbd.wScan = scan_code as u16;
+        kbd.dwFlags = if key_down { 0u32 } else { KEYEVENTF_KEYUP };
+        kbd.time = 0;
+        kbd.dwExtraInfo = 0;
+        SendInput(
+            1,
+            &mut input as *mut _ as *mut _,
+            std::mem::size_of::<winapi::um::winuser::INPUT>() as i32,
+        );
+
+        // PostMessageW to all non-active windows. SendInput already
+        // went to the foreground (active) window. For other windows
+        // that are not in focus, PostMessageW may not be enough for
+        // DirectInput games, but it's the best we can do without
+        // focus stealing which is unreliable.
+        for (idx, hwnd) in windows.iter().enumerate() {
+            if idx == active_idx {
+                continue;
+            }
             if !hwnd.is_null() {
-                return Some(hwnd);
+                PostMessageW(*hwnd, msg, vk_code as WPARAM, lparam);
             }
         }
-        None
     }
 }
 
@@ -314,9 +351,10 @@ mod tests {
     #[test]
     fn broadcast_manager_initial_state() {
         let config = BroadcastConfig {
-            enabled: false,
+            enabled: false, // explicitly disabled in this test
             keys: vec![],
             toggle_key: 0x78, // F9
+            target_process: None,
         };
         let mgr = BroadcastManager::new(config, vec![]);
         assert!(!mgr.is_enabled());

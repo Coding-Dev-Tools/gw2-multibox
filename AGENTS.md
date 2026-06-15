@@ -69,6 +69,7 @@ gw2-multibox/
 │   ├── log.rs              # file logging to %APPDATA%\Multisbox\
 │   ├── http.rs             # embedded HTTP server for the web UI
 │   ├── file_lock.rs        # CreateFileW with FILE_SHARE_*|DELETE
+│   ├── junction.rs         # mklink /J wrapper for per-account appdata
 │   ├── mutex_kill.rs       # NtQuerySystemInformation + DuplicateHandle
 │   ├── launcher_inject.rs  # DISABLED — see Critical Constraints above
 │   └── ui/static/          # embedded web UI assets (HTML/JS/CSS)
@@ -86,9 +87,6 @@ gw2-multibox/
 - `tools/Gw2LauncherStarter/` — small C# helper that launches the GW2 launcher
   in STA mode (fixes a DragDrop registration bug when launching from
   non-STA contexts like InnerSpace). Compiles independently.
-- `tools/multisbox-bypass/` — **superseded stub** of the original IAT-hooking
-  DLL approach. Retained as historical reference; the production mutex-kill
-  path is in `src/mutex_kill.rs`. To remove: delete the directory.
 - `tools/gw2launcher-src/` — vendored copy of the upstream
   `Healix/Gw2Launcher` C# source (`fc530bb` commit). **Gitignored**; not
   built in-repo. Kept locally for reference. The zip source is also ignored.
