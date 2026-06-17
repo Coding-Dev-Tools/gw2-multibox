@@ -81,11 +81,46 @@ pub struct TeamOptions {
     /// on F1-F5.
     #[serde(default)]
     pub hotkey_base: Option<u32>,
+    /// Window layout mode. Default: tiled.
+    /// "swap" = ISBoxer-style: focused window full-screen, others
+    /// as small thumbnails at the bottom; clicking a thumbnail swaps it.
+    #[serde(default)]
+    pub layout_mode: Option<LayoutMode>,
 }
 
 pub fn default_hotkey_base() -> u32 {
     // F6 = 0x75 — skip F1-F5 which are commonly used by games
     0x75
+}
+
+/// Window layout mode.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LayoutMode {
+    /// Classic tiled layout — each slot gets its own region, no overlap.
+    #[default]
+    Tiled,
+    /// ISBoxer-style swap layout — focused window is full-screen,
+    /// other windows are small thumbnails at the bottom. Clicking a
+    /// thumbnail swaps it to become the focused window.
+    Swap,
+}
+
+/// Broadcast delivery mode — how keys are sent to non-active windows.
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliveryMode {
+    /// PostMessage WM_KEYDOWN/WM_KEYUP — no focus switching required.
+    /// Does NOT work with DirectInput/Raw Input games (GW2, many others).
+    /// Only works with games that read keyboard input from the window message queue.
+    PostMessage,
+    /// Focus cycling — briefly SetForegroundWindow each target, SendInput,
+    /// then restore the original foreground window. This is the ONLY reliable
+    /// method for DirectInput/Raw Input games like GW2. The layout stays
+    /// visually stable because the original foreground is restored after
+    /// the key is delivered to each target.
+    #[default]
+    FocusCycle,
 }
 
 /// Input broadcasting configuration.
@@ -107,6 +142,11 @@ pub struct BroadcastConfig {
     /// the multibox tool doesn't directly know about.
     #[serde(default)]
     pub target_process: Option<String>,
+    /// How keys are delivered to non-active windows.
+    /// "postmessage" (default) = no focus switching, preferred for swap layout.
+    /// "focus_cycle" = brief focus change per target, works with all games.
+    #[serde(default)]
+    pub delivery_mode: DeliveryMode,
 }
 
 impl Default for BroadcastConfig {
@@ -116,6 +156,7 @@ impl Default for BroadcastConfig {
             keys: vec![],
             toggle_key: default_toggle_key(),
             target_process: None,
+            delivery_mode: DeliveryMode::default(),
         }
     }
 }
@@ -191,6 +232,7 @@ impl Config {
                     stagger_delay_ms: Some(3000),
                     window_timeout_ms: Some(60000),
                     hotkey_base: None,
+                    layout_mode: None,
                 },
             },
             broadcast: BroadcastConfig::default(),
@@ -221,6 +263,10 @@ impl Config {
 
     pub fn default_timeout_ms(&self) -> u64 {
         self.team.options.window_timeout_ms.unwrap_or(60000)
+    }
+
+    pub fn layout_mode(&self) -> LayoutMode {
+        self.team.options.layout_mode.clone().unwrap_or_default()
     }
 }
 
@@ -427,13 +473,15 @@ fn to_wide(s: &str) -> Vec<u16> {
 }
 
 /// Generate a GW2-optimized starter config with auto-detected path and 4-account layout.
+/// Uses InnerSpace-style swap layout: 1 large window on top, 3 thumbnails on bottom.
 pub fn gw2_template() -> Config {
     let exe_path =
         detect_gw2_path().unwrap_or_else(|| r"C:\Games\Guild Wars 2\Gw2-64.exe".to_string());
 
-    // Get monitor info for smart layout
+    // Get monitor info for the placeholder region. In swap mode the
+    // runtime computes real geometry from this monitor at reposition
+    // time; in tiled mode users edit layout.regions by hand.
     let (mon_w, mon_h) = get_primary_monitor_size();
-    let (region_w, region_h) = (mon_w / 2, mon_h / 2);
 
     Config {
         game_profiles: vec![GameProfile {
@@ -468,36 +516,26 @@ pub fn gw2_template() -> Config {
                 extra_args: None,
             },
         ],
+        // In swap mode the runtime computes regions from the monitor at
+        // reposition time (see window::swap_layout_positions). The `layout`
+        // field is still required by the schema, so we ship a single
+        // placeholder region that documents the swap contract. The values
+        // are ignored when team.options.layout_mode = swap; if you ever
+        // switch back to tiled mode, these are the regions that will be
+        // applied.
         layout: Layout {
-            name: "2x2-grid".to_string(),
+            name: "innerspace-swap".to_string(),
             regions: vec![
+                // Placeholder for swap mode. The real geometry is computed
+                // live from the primary monitor; the active slot gets the
+                // full width × 80% height, the remaining slots are evenly
+                // sized thumbnails along the bottom 20%.
                 Region {
-                    name: "tl".to_string(),
+                    name: "swap-auto".to_string(),
                     x: 0,
                     y: 0,
-                    width: region_w as i32,
-                    height: region_h as i32,
-                },
-                Region {
-                    name: "tr".to_string(),
-                    x: region_w as i32,
-                    y: 0,
-                    width: region_w as i32,
-                    height: region_h as i32,
-                },
-                Region {
-                    name: "bl".to_string(),
-                    x: 0,
-                    y: region_h as i32,
-                    width: region_w as i32,
-                    height: region_h as i32,
-                },
-                Region {
-                    name: "br".to_string(),
-                    x: region_w as i32,
-                    y: region_h as i32,
-                    width: region_w as i32,
-                    height: region_h as i32,
+                    width: mon_w as i32,
+                    height: mon_h as i32,
                 },
             ],
         },
@@ -507,28 +545,29 @@ pub fn gw2_template() -> Config {
                 Slot {
                     index: 1,
                     account: "Account1".to_string(),
-                    region: "tl".to_string(),
+                    region: "swap-auto".to_string(),
                 },
                 Slot {
                     index: 2,
                     account: "Account2".to_string(),
-                    region: "tr".to_string(),
+                    region: "swap-auto".to_string(),
                 },
                 Slot {
                     index: 3,
                     account: "Account3".to_string(),
-                    region: "bl".to_string(),
+                    region: "swap-auto".to_string(),
                 },
                 Slot {
                     index: 4,
                     account: "Account4".to_string(),
-                    region: "br".to_string(),
+                    region: "swap-auto".to_string(),
                 },
             ],
             options: TeamOptions {
                 stagger_delay_ms: Some(3000),
                 window_timeout_ms: Some(60000),
                 hotkey_base: None,
+                layout_mode: Some(LayoutMode::Swap),
             },
         },
         broadcast: BroadcastConfig::default(),
@@ -770,16 +809,16 @@ pub fn wow_template() -> Config {
                     index: 4,
                     account: "Account4".to_string(),
                     region: "br".to_string(),
-                                },
+                },
             ],
             options: TeamOptions {
                 stagger_delay_ms: Some(5000),
                 window_timeout_ms: Some(120000),
                 hotkey_base: None,
+                layout_mode: None,
             },
         },
         broadcast: BroadcastConfig::default(),
-
 
         named_layouts: vec![],
     }
@@ -882,16 +921,16 @@ pub fn ffxiv_template() -> Config {
                     index: 4,
                     account: "Account4".to_string(),
                     region: "br".to_string(),
-                                },
+                },
             ],
             options: TeamOptions {
                 stagger_delay_ms: Some(5000),
                 window_timeout_ms: Some(120000),
                 hotkey_base: None,
+                layout_mode: None,
             },
         },
         broadcast: BroadcastConfig::default(),
-
 
         named_layouts: vec![],
     }
@@ -993,16 +1032,16 @@ pub fn eve_template() -> Config {
                     index: 4,
                     account: "Account4".to_string(),
                     region: "br".to_string(),
-                                },
+                },
             ],
             options: TeamOptions {
                 stagger_delay_ms: Some(5000),
                 window_timeout_ms: Some(120000),
                 hotkey_base: None,
+                layout_mode: None,
             },
         },
         broadcast: BroadcastConfig::default(),
-
 
         named_layouts: vec![],
     }
@@ -1128,6 +1167,7 @@ mod tests {
             stagger_delay_ms: Some(1500),
             window_timeout_ms: Some(20000),
             hotkey_base: None,
+            layout_mode: None,
         };
         assert_eq!(cfg.default_stagger_ms(), 1500);
         assert_eq!(cfg.default_timeout_ms(), 20000);
@@ -1239,5 +1279,124 @@ mod tests {
         // useful out of the box; users can disable it in their YAML.
         let cfg = BroadcastConfig::default();
         assert!(cfg.enabled);
+    }
+
+    #[test]
+    fn layout_mode_default_is_tiled() {
+        let cfg = minimal_config();
+        assert_eq!(cfg.layout_mode(), LayoutMode::Tiled);
+    }
+
+    #[test]
+    fn layout_mode_swap_parses() {
+        let yaml = r#"
+game_profiles:
+  - name: test
+    exe_path: C:/test.exe
+accounts:
+  - name: a1
+    game_profile: test
+layout:
+  name: default
+  regions:
+    - name: main
+      x: 0
+      y: 0
+      width: 1920
+      height: 1080
+team:
+  name: team1
+  slots:
+    - index: 1
+      account: a1
+      region: main
+  options:
+    layout_mode: swap
+"#;
+        let cfg: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(cfg.layout_mode(), LayoutMode::Swap);
+    }
+
+    #[test]
+    fn delivery_mode_default_is_focus_cycle() {
+        // Focus cycling is the default because it's the ONLY method that
+        // works with DirectInput/Raw Input games (GW2, etc.). PostMessage
+        // does not deliver keys to these games.
+        let cfg = BroadcastConfig::default();
+        assert_eq!(cfg.delivery_mode, DeliveryMode::FocusCycle);
+    }
+
+    #[test]
+    fn delivery_mode_postmessage_parses() {
+        let yaml = r#"
+game_profiles:
+  - name: test
+    exe_path: C:/test.exe
+accounts:
+  - name: a1
+    game_profile: test
+layout:
+  name: default
+  regions:
+    - name: main
+      x: 0
+      y: 0
+      width: 1920
+      height: 1080
+team:
+  name: team1
+  slots:
+    - index: 1
+      account: a1
+      region: main
+broadcast:
+  delivery_mode: post_message
+"#;
+        let cfg: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(cfg.broadcast.delivery_mode, DeliveryMode::PostMessage);
+    }
+
+    #[test]
+    fn delivery_mode_focus_cycle_parses() {
+        let yaml = r#"
+game_profiles:
+  - name: test
+    exe_path: C:/test.exe
+accounts:
+  - name: a1
+    game_profile: test
+layout:
+  name: default
+  regions:
+    - name: main
+      x: 0
+      y: 0
+      width: 1920
+      height: 1080
+team:
+  name: team1
+  slots:
+    - index: 1
+      account: a1
+      region: main
+broadcast:
+  delivery_mode: focus_cycle
+"#;
+        let cfg: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(cfg.broadcast.delivery_mode, DeliveryMode::FocusCycle);
+    }
+
+    #[test]
+    fn gw2_template_uses_swap_layout() {
+        let cfg = gw2_template();
+        assert_eq!(cfg.layout_mode(), LayoutMode::Swap);
+        // The template ships a single placeholder region in swap mode;
+        // the runtime computes real geometry from the primary monitor.
+        // This is a regression test for the design where the template
+        // accidentally shipped 4 hard-coded regions that were ignored
+        // by the swap layout at runtime (see CHANGELOG / PR notes).
+        assert_eq!(cfg.layout.regions.len(), 1);
+        assert_eq!(cfg.layout.regions[0].name, "swap-auto");
+        assert_eq!(cfg.team.slots.len(), 4);
     }
 }

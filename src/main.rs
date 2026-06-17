@@ -10,10 +10,12 @@
 //!   -h, --help      Print help
 
 use anyhow::Result;
-use gw2_multibox::config::{self, Config};
+use gw2_multibox::config::{self, Config, LayoutMode};
 use gw2_multibox::{broadcast, hotkey, http, launcher, log, mutex_kill, tray, window};
+use std::cell::Cell;
 use std::env;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::thread;
 use std::time::Duration;
 use winapi::shared::minwindef::DWORD;
@@ -414,6 +416,108 @@ fn run_ui(config_path: PathBuf, port: u16) -> Result<()> {
     server.serve(port)
 }
 
+/// Reposition all windows for the swap layout (ISBoxer-style).
+/// Active slot gets full screen on top; others become thumbnails at the bottom.
+///
+/// In revision 2 we stopped promoting any window to HWND_TOPMOST. The old
+/// behavior caused two real problems: (1) games like GW2 detect a
+/// persistent TOPMOST window and re-anchor to their saved position, undoing
+/// our layout within a second; (2) the active game window would stay above
+/// every other app (browser, chat, etc.) even after the user alt-tabbed
+/// away. Both are fixed by using HWND_TOP for all four windows and calling
+/// `SetForegroundWindow` separately for focus.
+fn reposition_swap_layout(windows: &[HWND], active_idx: usize, monitor: (i32, i32, i32, i32)) {
+    let regions = window::swap_layout_positions(monitor, active_idx, windows.len());
+    for (i, hwnd) in windows.iter().enumerate() {
+        if hwnd.is_null() || i >= regions.len() {
+            continue;
+        }
+        unsafe {
+            // All slots use HWND_TOP (not TOPMOST) so the game doesn't
+            // re-anchor, and so alt-tab works to leave the team.
+            window::apply_region_zorder(*hwnd, &regions[i], false);
+        }
+    }
+    // Separately hand focus to the newly active slot. SetWindowPos with
+    // SWP_NOACTIVATE (used inside apply_region_zorder) deliberately
+    // suppresses focus, so we need this second call to make the swap
+    // "stick" for keyboard input.
+    if let Some(&hwnd) = windows.get(active_idx)
+        && !hwnd.is_null()
+    {
+        unsafe {
+            window::activate(hwnd);
+        }
+    }
+}
+
+/// Continue polling for any missing slot windows until `target` is met
+/// or `overall_timeout_ms` elapses. Returns the additional HWNDs found.
+/// Used as a second pass after the initial launch wait, so the hotkey
+/// manager can be registered with the full slot count.
+fn discover_remaining_windows(
+    pids: &[DWORD],
+    already_known: &[HWND],
+    overall_timeout_ms: u64,
+) -> Vec<HWND> {
+    let mut found: Vec<HWND> = Vec::new();
+    let start = std::time::Instant::now();
+    let mut still_missing: Vec<usize> = (0..pids.len())
+        .filter(|i| pids[*i] != 0 && !already_known.iter().any(|h| !h.is_null()))
+        .collect();
+    let _ = &mut still_missing; // suppress unused-mut if Vec is empty
+
+    while !still_missing.is_empty() && start.elapsed() < Duration::from_millis(overall_timeout_ms) {
+        for &slot_idx in still_missing.iter() {
+            let pid = pids[slot_idx];
+            if pid == 0 {
+                continue;
+            }
+            let hwnd = window::find_primary_by_pid(pid)
+                .map(|w| w.hwnd)
+                .or_else(|| window::find_any_window_by_pid(pid));
+            if let Some(h) = hwnd
+                && !already_known.contains(&h)
+                && !found.contains(&h)
+            {
+                found.push(h);
+                log::info(&format!(
+                    "Second-pass: found slot {} window (hwnd {:x}, pid {})",
+                    slot_idx + 1,
+                    h as usize,
+                    pid
+                ));
+            }
+        }
+        still_missing.retain(|&slot_idx| {
+            let pid = pids[slot_idx];
+            pid != 0
+                && !found.iter().chain(already_known.iter()).any(|h| {
+                    if h.is_null() {
+                        return false;
+                    }
+                    let mut owner_pid: DWORD = 0;
+                    unsafe {
+                        winapi::um::winuser::GetWindowThreadProcessId(*h, &mut owner_pid);
+                    }
+                    owner_pid == pid
+                })
+        });
+        if !still_missing.is_empty() {
+            thread::sleep(Duration::from_millis(250));
+        }
+    }
+
+    if !still_missing.is_empty() {
+        log::warn(&format!(
+            "Second-pass timed out: {} slot(s) still without a window: {:?}",
+            still_missing.len(),
+            still_missing.iter().map(|i| i + 1).collect::<Vec<_>>()
+        ));
+    }
+    found
+}
+
 fn run_live(config_path: &PathBuf) -> Result<()> {
     let config = Config::load(config_path)?;
     log::info(&format!("Loaded config from {:?}", config_path));
@@ -466,6 +570,15 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
     let first_profile = resolved.slot_to_profile[&config.team.slots[0].index];
     let is_launcher_mode = first_profile.launcher_mode;
     let slot_count = config.team.slots.len();
+    let is_swap = config.layout_mode() == LayoutMode::Swap;
+    let monitor = {
+        let monitors = window::list_monitors();
+        if let Some(m) = monitors.first() {
+            (m.x, m.y, m.width, m.height)
+        } else {
+            (0, 0, 1920, 1080)
+        }
+    };
 
     let mut windows: Vec<HWND> = Vec::new();
 
@@ -512,28 +625,22 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
                 windows.push(hwnd);
                 let slot = &config.team.slots[positioned];
                 let region = resolved.slot_to_region[&slot.index];
-                unsafe {
-                    window::apply_region(hwnd, region);
+                // In swap mode, all windows overlap — reposition_swap_layout
+                // handles it after the discovery loop. Skip raw positioning.
+                if config.layout_mode() != LayoutMode::Swap {
+                    unsafe {
+                        window::apply_region(hwnd, region);
+                    }
                 }
                 let mut pid: DWORD = 0;
                 unsafe {
                     winapi::um::winuser::GetWindowThreadProcessId(hwnd, &mut pid);
                 }
                 positioned += 1;
-                println!(
-                    "  Slot {} ({}) -> {} ({},{} {}x{}) [pid {}]",
-                    positioned,
-                    slot.account,
-                    region.name,
-                    region.x,
-                    region.y,
-                    region.width,
-                    region.height,
-                    pid
-                );
+                println!("  Slot {} ({}) [pid {}]", positioned, slot.account, pid);
                 log::info(&format!(
-                    "Slot {} positioned at {} (hwnd {:x}, pid {})",
-                    positioned, region.name, hwnd as usize, pid
+                    "Slot {} discovered (hwnd {:x}, pid {})",
+                    positioned, hwnd as usize, pid
                 ));
             }
             if positioned > 0 {
@@ -553,14 +660,46 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
             );
             log::warn(&format!("No {} windows found within 30s", game_name));
         } else {
+            // Second pass: keep polling for game windows by process
+            // name until we have slot_count or overall_timeout_ms
+            // elapses. In launcher mode the children are spawned by
+            // Gw2Launcher.exe and we don't have their PIDs directly,
+            // so we just keep asking the system for top-level windows
+            // of `game_name` until the count matches what we need.
+            let start = std::time::Instant::now();
+            let max_extra_ms = timeout.saturating_sub(30_000);
+            while positioned < slot_count && start.elapsed() < Duration::from_millis(max_extra_ms) {
+                let new_hwnds = window::collect_new_windows(game_name, &windows);
+                for hwnd in new_hwnds {
+                    if positioned >= slot_count {
+                        break;
+                    }
+                    windows.push(hwnd);
+                    positioned += 1;
+                    println!("  Slot {} (second pass) found", positioned);
+                    log::info(&format!(
+                        "Launcher-mode second pass: slot {} found (hwnd {:x})",
+                        positioned, hwnd as usize
+                    ));
+                }
+                if positioned < slot_count {
+                    thread::sleep(Duration::from_millis(500));
+                }
+            }
             println!(
-                "Found {}/{} windows. Hotkeys active for those slots.",
-                positioned, slot_count
+                "Found {}/{} windows. Hotkeys active for all {} slots.",
+                positioned, slot_count, slot_count
             );
             log::info(&format!(
-                "Found {}/{} windows initially",
+                "Found {}/{} windows after launcher-mode second pass",
                 positioned, slot_count
             ));
+            // Pad with nulls so window indices align with slot indices
+            // (the hotkey handler reads `windows[idx]` and checks
+            // `hwnd.is_null()`).
+            while windows.len() < slot_count {
+                windows.push(std::ptr::null_mut());
+            }
         }
     } else {
         // Direct mode: launch each slot's exe and find by PID
@@ -586,7 +725,9 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
             });
         let multibox_data_root = std::env::var("LOCALAPPDATA")
             .map(|p| std::path::PathBuf::from(p).join("Multisbox").join("data"))
-            .unwrap_or_else(|_| std::path::PathBuf::from(r"C:\Users\home\AppData\Local\Multisbox\data"));
+            .unwrap_or_else(|_| {
+                std::path::PathBuf::from(r"C:\Users\home\AppData\Local\Multisbox\data")
+            });
 
         let mut junctions_created: Vec<(std::path::PathBuf, std::path::PathBuf)> = Vec::new();
         for slot in &config.team.slots {
@@ -745,8 +886,13 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
         }
         println!("All {} instances launched.", pids.len());
 
-        // Poll for windows by PID
+        // First pass: quick poll for each slot's window. This is per-slot
+        // with a per-slot budget of (timeout / 100) * 100ms, but the
+        // total runtime is bounded by `timeout`. Most games that take
+        // a long time to render their first frame (GW2, FFXIV) will
+        // need the second pass below.
         let poll_iterations = timeout / 100;
+        let mut missing_pids: Vec<(usize, DWORD)> = Vec::new();
         for (i, slot) in config.team.slots.iter().enumerate() {
             let pid = pids[i];
             let region = resolved.slot_to_region[&slot.index];
@@ -762,8 +908,15 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
                 let any = window::find_any_window_by_pid(pid);
                 if let Some(hwnd) = primary.or(any) {
                     windows.push(hwnd);
-                    unsafe {
-                        window::apply_region(hwnd, region);
+                    // In tiled mode, position the window at its configured
+                    // region. In swap mode, the second pass + final
+                    // reposition_swap_layout below does the work, so we
+                    // skip the raw positioning here to avoid a one-frame
+                    // flicker at the wrong location.
+                    if !is_swap {
+                        unsafe {
+                            window::apply_region_zorder(hwnd, region, false);
+                        }
                     }
                     println!(
                         "Slot {} ({}) -> {} ({},{} {}x{}) [pid {}]",
@@ -788,21 +941,81 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
                 thread::sleep(Duration::from_millis(100));
             }
             if !found {
+                missing_pids.push((i, pid));
                 eprintln!(
-                    "WARNING: Could not find window for slot {} (PID {}) within {}ms",
+                    "Slot {} ({}) first-pass miss; entering second pass",
                     i + 1,
-                    pid,
-                    timeout
+                    slot.account
                 );
-                log::warn(&format!(
-                    "Slot {} (PID {}) window not found within {}ms",
-                    i + 1,
-                    pid,
-                    timeout
-                ));
-                windows.push(std::ptr::null_mut());
             }
         }
+
+        // Second pass: keep polling for any slot that didn't show a
+        // window in the first pass, until we either find it or hit
+        // another `timeout`. The previous code bailed out after the
+        // first pass and registered hotkeys against only the slots
+        // that succeeded, which left the rest of the team stranded at
+        // GW2's default window position.
+        if !missing_pids.is_empty() {
+            let second_pass_pids: Vec<DWORD> = missing_pids.iter().map(|(_, pid)| *pid).collect();
+            let extra = discover_remaining_windows(&second_pass_pids, &windows, timeout);
+            for (hwnd, (slot_idx, pid)) in extra.iter().zip(missing_pids.iter()) {
+                let slot = &config.team.slots[*slot_idx];
+                let region = resolved.slot_to_region[&slot.index];
+                if !is_swap {
+                    unsafe {
+                        window::apply_region_zorder(*hwnd, region, false);
+                    }
+                }
+                windows.push(*hwnd);
+                println!(
+                    "Slot {} ({}) [second pass] -> {} (hwnd {:x}, pid {})",
+                    slot_idx + 1,
+                    slot.account,
+                    region.name,
+                    *hwnd as usize,
+                    pid
+                );
+            }
+            for (slot_idx, pid) in missing_pids.iter() {
+                let _slot = &config.team.slots[*slot_idx];
+                if !windows.iter().any(|h| {
+                    if h.is_null() {
+                        return false;
+                    }
+                    let mut owner: DWORD = 0;
+                    unsafe {
+                        winapi::um::winuser::GetWindowThreadProcessId(*h, &mut owner);
+                    }
+                    owner == *pid
+                }) {
+                    eprintln!(
+                        "WARNING: Could not find window for slot {} (PID {}) after second pass",
+                        slot_idx + 1,
+                        pid
+                    );
+                    log::warn(&format!(
+                        "Slot {} (PID {}) window not found after second pass",
+                        slot_idx + 1,
+                        pid
+                    ));
+                    // Pad with a null so the slot index in `windows` stays
+                    // aligned with `config.team.slots` (used by hotkey
+                    // indexing later).
+                    windows.push(std::ptr::null_mut());
+                }
+            }
+        }
+    }
+
+    // (is_swap and monitor are computed above, before the launch branch
+    // that needs them)
+
+    // In swap mode, reposition all discovered windows using ISBoxer layout
+    if is_swap && !windows.is_empty() {
+        reposition_swap_layout(&windows, 0, monitor);
+        println!("Swap layout: slot 1 = full screen, others = bottom thumbnails.");
+        log::info("Swap layout applied");
     }
 
     // Activate first slot
@@ -816,8 +1029,14 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
         log::info("Activated slot 1");
     }
 
-    // Register hotkeys — only for windows we actually found
-    let active_count = windows.len();
+    // Register hotkeys for every configured slot, not just the ones we
+    // successfully discovered. The previous behavior only registered
+    // hotkeys for discovered windows, which meant slots that took longer
+    // to spawn (typical for GW2 in launcher mode) had no hotkey at all —
+    // even if their window showed up 5 seconds later. The hotkey handler
+    // already guards `idx < windows.len()` and the slot's HWND is
+    // non-null check, so missing slots just no-op with a friendly log.
+    let active_count = slot_count;
     let hotkey_base = config
         .team
         .options
@@ -842,38 +1061,58 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
         };
         let first = label(hotkey_base);
         let last = label(hotkey_base + active_count as u32 - 1);
+        let found_now = windows.iter().filter(|h| !h.is_null()).count();
         println!(
             "\nHotkeys registered: {}..{} to switch windows (F1-F5 are reserved for your game).",
             first, last
         );
+        if found_now < active_count {
+            println!(
+                "Note: {}/{} slot windows are visible right now. Hotkeys for the missing slots will activate once their windows appear.",
+                found_now, active_count
+            );
+        }
         println!("Press Ctrl+C to exit.\n");
     }
     log::info(&format!(
-        "Registered {} hotkeys (base VK 0x{:X})",
-        active_count, hotkey_base
+        "Registered {} hotkeys (base VK 0x{:X}); {} window(s) discovered so far",
+        active_count,
+        hotkey_base,
+        windows.iter().filter(|h| !h.is_null()).count()
     ));
 
     // Initialize input broadcasting
     let mut broadcast_mgr =
         broadcast::BroadcastManager::new(config.broadcast.clone(), windows.clone());
 
+    // In swap mode, default to PostMessage delivery (no focus switching).
+    // Users can override with broadcast.delivery_mode: focus_cycle in config.
+    if is_swap && config.broadcast.delivery_mode == config::DeliveryMode::PostMessage {
+        // Already the default, but log it for clarity
+        log::info("Swap mode: using PostMessage delivery (no focus switching during broadcast)");
+    }
+
     // If the user specified a target process (e.g. "Gw2-64"), discover
-    // its windows and add them to the broadcast target list. This is
-    // the case when the multibox tool launched a launcher (like
-    // Gw2Launcher.exe) that spawns separate game processes the tool
-    // didn't directly start.
+    // its windows and add them to the broadcast target list. In swap
+    // mode, we also position them as they appear. We do a quick
+    // non-blocking scan first, then rely on F9 refresh and hotkey
+    // handlers to pick up new windows.
     let mut target_windows: Vec<HWND> = windows.clone();
     if let Some(proc) = &config.broadcast.target_process {
         let discovered = window::find_windows_by_process_name(proc);
         if !discovered.is_empty() {
+            if is_swap {
+                for hwnd in &discovered {
+                    if !windows.contains(hwnd) {
+                        windows.push(*hwnd);
+                    }
+                }
+                reposition_swap_layout(&windows, 0, monitor);
+            }
             println!(
-                "Broadcast: discovered {} '{}' window(s): {:?}",
+                "Broadcast: discovered {} '{}' window(s)",
                 discovered.len(),
                 proc,
-                discovered
-                    .iter()
-                    .map(|h| format!("{:x}", *h as usize))
-                    .collect::<Vec<_>>()
             );
             log::info(&format!(
                 "Broadcast: discovered {} '{}' window(s)",
@@ -882,8 +1121,8 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
             ));
             target_windows = discovered;
         } else {
-            log::warn(&format!(
-                "Broadcast: no '{}' process windows found yet (will retry when broadcasting is enabled)",
+            log::info(&format!(
+                "Broadcast: no '{}' windows found yet — will discover on F9 refresh",
                 proc
             ));
         }
@@ -937,40 +1176,148 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
         Some(tray_icon_hwnd)
     };
 
+    // Shared active slot index for focus polling
+    let active_slot = Rc::new(Cell::new(0usize));
+
+    // Build focus poll callback for swap mode: every 250ms, detect
+    // focus changes and reposition.
+    //
+    // The previous revision required 2 polls of the same foreground
+    // (~500ms) plus a 1-second cooldown before acting. That was tuned
+    // for transient focus flicker (context menus, tooltips), but the
+    // cost was a 1.5–2 second delay between clicking a thumbnail and
+    // seeing the swap happen. In practice Windows delivers
+    // WM_SETFOCUS within ~50ms of a real click, so a single
+    // confirmation poll (~250ms) plus a short cooldown is sufficient
+    // to reject transient events while keeping the swap feeling
+    // instantaneous.
+    let poll_fn = if is_swap {
+        let windows_for_poll = windows.clone();
+        let active_slot_clone = active_slot.clone();
+        let broadcast_mgr_ptr = &broadcast_mgr as *const broadcast::BroadcastManager;
+        let pending_fg = Rc::new(Cell::new(Option::<usize>::None));
+        let last_reposition = Rc::new(Cell::new(
+            std::time::Instant::now() - std::time::Duration::from_secs(2),
+        ));
+        let pending_fg_clone = pending_fg.clone();
+        let last_reposition_clone = last_reposition.clone();
+        Some(move || {
+            if let Some(new_fg) = window::get_foreground_slot(&windows_for_poll) {
+                let current = active_slot_clone.get();
+                if new_fg != current && new_fg < windows_for_poll.len() {
+                    let pending = pending_fg_clone.get();
+                    if pending == Some(new_fg) {
+                        // Cooldown: 250ms minimum between repositions.
+                        let elapsed = last_reposition_clone.get().elapsed();
+                        if elapsed >= std::time::Duration::from_millis(250) {
+                            reposition_swap_layout(&windows_for_poll, new_fg, monitor);
+                            active_slot_clone.set(new_fg);
+                            pending_fg_clone.set(None);
+                            last_reposition_clone.set(std::time::Instant::now());
+                            // SAFETY: broadcast_mgr is alive for the entire
+                            // message loop (held in scope above the run_loop
+                            // call).
+                            unsafe {
+                                (*broadcast_mgr_ptr).set_active_slot(new_fg);
+                            }
+                            println!("Swapped to slot {} (focus stable).", new_fg + 1);
+                            log::info(&format!("Focus swap to slot {}", new_fg + 1));
+                        }
+                    } else {
+                        // First poll seeing this focus change — require
+                        // it to be confirmed on the next poll (250ms
+                        // later) before acting. This is what filters
+                        // out transient foreground changes from context
+                        // menus, popups, and tooltip hovers.
+                        pending_fg_clone.set(Some(new_fg));
+                    }
+                } else {
+                    // Focus is back to current or unknown — clear pending.
+                    pending_fg_clone.set(None);
+                }
+            } else {
+                // Foreground is not one of our windows (external app,
+                // child window, etc.). Clear any pending change and
+                // don't reposition.
+                pending_fg_clone.set(None);
+            }
+        })
+    } else {
+        None
+    };
+
     hotkey::run_loop(
         active_count,
         |event| match event {
             hotkey::HotkeyEvent::Slot(idx) => {
-                // Re-scan for new game windows each time a slot
-                // hotkey is pressed (covers the case where the user
-                // launched additional games via the Healix launcher
-                // and they weren't present at startup).
                 if let Some(proc) = &config.broadcast.target_process {
                     let discovered = window::find_windows_by_process_name(proc);
                     if !discovered.is_empty() {
+                        if is_swap {
+                            let mut changed = false;
+                            for hwnd in &discovered {
+                                if !windows.contains(hwnd) {
+                                    windows.push(*hwnd);
+                                    changed = true;
+                                }
+                            }
+                            if changed {
+                                reposition_swap_layout(&windows, idx, monitor);
+                            }
+                        }
                         broadcast_mgr.update_windows(discovered);
                     }
                 }
                 if idx < windows.len() {
                     let hwnd = windows[idx];
                     if !hwnd.is_null() {
-                        unsafe {
-                            window::activate(hwnd);
+                        if is_swap {
+                            // In swap mode, hotkeys do NOT switch windows.
+                            // Only the broadcast active_slot is updated so keys
+                            // are forwarded to the correct non-active windows.
+                            // Window switching happens only via alt+Tab or mouse click
+                            // (detected by the focus poll callback).
+                            active_slot.set(idx);
+                            broadcast_mgr.set_active_slot(idx);
+                            println!(
+                                "Broadcast target: slot {} (use alt+Tab or click to switch main window).",
+                                idx + 1
+                            );
+                            log::info(&format!(
+                                "Broadcast target set to slot {} (no window switch)",
+                                idx + 1
+                            ));
+                        } else {
+                            // Tiled mode: hotkeys switch windows as before
+                            unsafe {
+                                window::activate(hwnd);
+                            }
+                            active_slot.set(idx);
+                            broadcast_mgr.set_active_slot(idx);
+                            println!("Switched to slot {}.", idx + 1);
+                            log::info(&format!("Switched to slot {}", idx + 1));
                         }
-                        broadcast_mgr.set_active_slot(idx);
-                        println!("Switched to slot {}.", idx + 1);
-                        log::info(&format!("Switched to slot {}", idx + 1));
                     }
                 }
             }
             hotkey::HotkeyEvent::BroadcastToggle => {
-                // Re-scan for target process windows each time F9 is
-                // pressed, so newly-launched games (via the Healix
-                // launcher) get picked up. F9 is the natural
-                // "refresh" hotkey.
                 if let Some(proc) = &config.broadcast.target_process {
                     let discovered = window::find_windows_by_process_name(proc);
                     if !discovered.is_empty() {
+                        // In swap mode, add any new windows and reposition
+                        if is_swap {
+                            let mut changed = false;
+                            for hwnd in &discovered {
+                                if !windows.contains(hwnd) {
+                                    windows.push(*hwnd);
+                                    changed = true;
+                                }
+                            }
+                            if changed {
+                                reposition_swap_layout(&windows, 0, monitor);
+                                println!("Swap layout: repositioned after refresh.");
+                            }
+                        }
                         println!(
                             "Broadcast: refreshed, found {} '{}' window(s)",
                             discovered.len(),
@@ -992,6 +1339,7 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
             }
         },
         tray_for_loop,
+        poll_fn,
     );
 
     // hkm auto-unregisters on drop

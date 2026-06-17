@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>Gw2LauncherStarter</RootNamespace>
+    <AssemblyName>Gw2LauncherStarter</AssemblyName>
+    <UseWindowsForms>false</UseWindowsForms>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+
+</Project>

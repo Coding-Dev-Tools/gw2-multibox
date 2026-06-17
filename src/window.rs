@@ -133,7 +133,7 @@ unsafe extern "system" fn enum_all_windows_for_pid_callback(hwnd: HWND, lparam: 
 /// without needing PROCESS_QUERY_INFORMATION on every process.
 pub fn find_windows_by_process_name(process_name: &str) -> Vec<HWND> {
     use winapi::um::handleapi::CloseHandle;
-    use winapi::um::tlhelp32::{Process32FirstW, Process32NextW, PROCESSENTRY32W};
+    use winapi::um::tlhelp32::{PROCESSENTRY32W, Process32FirstW, Process32NextW};
     use winapi::um::winnt::HANDLE;
 
     let needle = process_name.to_ascii_lowercase();
@@ -156,10 +156,7 @@ pub fn find_windows_by_process_name(process_name: &str) -> Vec<HWND> {
             loop {
                 // szExeFile is a wide null-terminated string
                 let name_w = &entry.szExeFile;
-                let name_len = name_w
-                    .iter()
-                    .position(|&c| c == 0)
-                    .unwrap_or(name_w.len());
+                let name_len = name_w.iter().position(|&c| c == 0).unwrap_or(name_w.len());
                 let name = String::from_utf16_lossy(&name_w[..name_len]).to_ascii_lowercase();
                 let name_no_exe = name.strip_suffix(".exe").unwrap_or(&name).to_string();
                 if name_no_exe == needle {
@@ -312,21 +309,47 @@ pub fn find_windows_by_title_pattern(pattern: &str) -> Vec<(WindowInfo, (i32, i3
         .collect()
 }
 
-/// Position a window at the given region.
+/// Position a window at the given region, making it topmost.
 ///
 /// # Safety
 ///
 /// Caller must ensure `hwnd` is a valid window handle.
 pub unsafe fn apply_region(hwnd: HWND, region: &Region) {
     unsafe {
+        apply_region_zorder(hwnd, region, true);
+    }
+}
+
+/// Position a window at the given region with explicit z-order control.
+///
+/// When `topmost` is true, the window is placed above all non-topmost windows.
+/// When false, it's placed at the top of the non-topmost z-order. This is
+/// important for swap layouts where only the active window should be topmost —
+/// using HWND_TOPMOST for all windows can cause them to not maintain proper
+/// z-order between each other.
+///
+/// Uses SWP_NOACTIVATE to prevent stealing focus, and omits SWP_FRAMECHANGED
+/// to prevent the window from recalculating its frame (which can cause games
+/// like GW2 to reposition themselves to their saved position).
+///
+/// # Safety
+///
+/// Caller must ensure `hwnd` is a valid window handle.
+pub unsafe fn apply_region_zorder(hwnd: HWND, region: &Region, topmost: bool) {
+    unsafe {
+        let zorder = if topmost {
+            HWND_TOPMOST as _
+        } else {
+            HWND_TOP as _
+        };
         SetWindowPos(
             hwnd,
-            HWND_TOPMOST as _,
+            zorder,
             region.x,
             region.y,
             region.width,
             region.height,
-            SWP_SHOWWINDOW | SWP_FRAMECHANGED,
+            SWP_SHOWWINDOW | SWP_NOACTIVATE,
         );
     }
 }
@@ -354,6 +377,73 @@ pub struct Monitor {
 
 /// Enumerate attached monitors. Used by the web UI to show
 /// coordinate info and help users position regions correctly.
+/// Compute ISBoxer-style swap-layout positions.
+///
+/// The focused slot gets the full screen. The other slots are
+/// positioned as small thumbnails along the bottom edge.
+///
+/// # Arguments
+/// * `monitor` — the monitor rectangle (x, y, w, h)
+/// * `active_slot` — 0-based index of the focused slot
+/// * `total_slots` — total number of windows (including active)
+pub fn swap_layout_positions(
+    monitor: (i32, i32, i32, i32),
+    active_slot: usize,
+    total_slots: usize,
+) -> Vec<Region> {
+    let (mx, my, mw, mh) = monitor;
+    let thumb_h = (mh as f64 * 0.20) as i32; // 20% for thumbnails
+    let main_h = mh - thumb_h;
+    let thumb_count = total_slots.saturating_sub(1);
+
+    let mut regions = Vec::with_capacity(total_slots);
+    for i in 0..total_slots {
+        if i == active_slot {
+            // Active slot: full screen
+            regions.push(Region {
+                name: format!("slot-{}", i + 1),
+                x: mx,
+                y: my,
+                width: mw,
+                height: main_h,
+            });
+        } else {
+            // Small thumbnails: evenly spaced along the bottom
+            let mut thumb_idx = 0;
+            for j in 0..total_slots {
+                if j == active_slot {
+                    continue;
+                }
+                if j == i {
+                    break;
+                }
+                thumb_idx += 1;
+            }
+            let thumb_w = mw / thumb_count as i32;
+            regions.push(Region {
+                name: format!("slot-{}", i + 1),
+                x: mx + thumb_idx * thumb_w,
+                y: my + main_h,
+                width: thumb_w,
+                height: thumb_h,
+            });
+        }
+    }
+    regions
+}
+
+/// Get the active slot index by checking which window is in the
+/// foreground. Returns None if the foreground window isn't one of ours.
+pub fn get_foreground_slot(windows: &[HWND]) -> Option<usize> {
+    unsafe {
+        let fg = GetForegroundWindow();
+        if fg.is_null() {
+            return None;
+        }
+        windows.iter().position(|&h| h == fg)
+    }
+}
+
 pub fn list_monitors() -> Vec<Monitor> {
     let mut monitors: Vec<Monitor> = Vec::new();
     unsafe {
@@ -411,5 +501,169 @@ mod tests {
     fn find_all_by_pid_zero_returns_empty() {
         // pid 0 is the System Idle Process and has no top-level windows
         assert!(find_all_by_pid(0).is_empty());
+    }
+
+    // ── swap layout tests ─────────────────────────────────────────
+
+    #[test]
+    fn swap_layout_4_slots_active_0() {
+        // 4 slots, active=0 (first), monitor 1920x1080
+        let regions = swap_layout_positions((0, 0, 1920, 1080), 0, 4);
+        assert_eq!(regions.len(), 4);
+
+        // Active slot: full screen
+        assert_eq!(regions[0].x, 0);
+        assert_eq!(regions[0].y, 0);
+        assert_eq!(regions[0].width, 1920);
+        assert_eq!(regions[0].height, 864); // 1080 * 0.8
+
+        // Thumbnails: bottom row, 20% height
+        for (i, region) in regions[1..4].iter().enumerate() {
+            let slot = i + 1;
+            assert_eq!(region.y, 864, "slot {} y", slot);
+            assert_eq!(region.height, 216, "slot {} height", slot);
+            assert_eq!(region.width, 640, "slot {} width", slot); // 1920/3
+        }
+        assert_eq!(regions[1].x, 0);
+        assert_eq!(regions[2].x, 640);
+        assert_eq!(regions[3].x, 1280);
+    }
+
+    #[test]
+    fn swap_layout_4_slots_active_2() {
+        // Active slot 2 (0-indexed) should be the full-screen one
+        let regions = swap_layout_positions((0, 0, 1920, 1080), 2, 4);
+        assert_eq!(regions.len(), 4);
+
+        // Slot 2 is active: full screen
+        assert_eq!(regions[2].height, 864);
+
+        // Slots 0,1,3 are thumbnails
+        for i in [0, 1, 3] {
+            assert_eq!(regions[i].y, 864, "slot {} y", i);
+            assert_eq!(regions[i].height, 216, "slot {} height", i);
+        }
+    }
+
+    #[test]
+    fn swap_layout_3_slots() {
+        let regions = swap_layout_positions((0, 0, 1920, 1080), 0, 3);
+        assert_eq!(regions.len(), 3);
+
+        // Active: full screen
+        assert_eq!(regions[0].height, 864);
+
+        // 2 thumbnails, each 960 wide
+        assert_eq!(regions[1].width, 960);
+        assert_eq!(regions[2].width, 960);
+        assert_eq!(regions[1].x, 0);
+        assert_eq!(regions[2].x, 960);
+    }
+
+    #[test]
+    fn swap_layout_single_slot() {
+        let regions = swap_layout_positions((0, 0, 1920, 1080), 0, 1);
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].width, 1920);
+        assert_eq!(regions[0].height, 864);
+    }
+
+    #[test]
+    fn swap_layout_2_slots() {
+        let regions = swap_layout_positions((0, 0, 1920, 1080), 0, 2);
+        assert_eq!(regions.len(), 2);
+
+        // Active: full screen top
+        assert_eq!(regions[0].height, 864);
+
+        // 1 thumbnail: full width bottom
+        assert_eq!(regions[1].width, 1920);
+        assert_eq!(regions[1].height, 216);
+        assert_eq!(regions[1].y, 864);
+    }
+
+    #[test]
+    fn swap_layout_multi_monitor_offset() {
+        // Monitor at (1920,0) — second monitor
+        let regions = swap_layout_positions((1920, 0, 1920, 1080), 0, 2);
+        assert_eq!(regions[0].x, 1920);
+        assert_eq!(regions[1].x, 1920);
+    }
+
+    #[test]
+    fn swap_layout_all_thumbnails_same_y() {
+        // All non-active slots share the same y position
+        let regions = swap_layout_positions((0, 0, 1920, 1080), 0, 4);
+        let thumb_y = regions[1].y;
+        for region in &regions[2..4] {
+            assert_eq!(region.y, thumb_y);
+        }
+    }
+
+    #[test]
+    fn swap_layout_active_slot_full_screen() {
+        // The active slot always occupies the full width
+        for active in 0..4 {
+            let regions = swap_layout_positions((0, 0, 1920, 1080), active, 4);
+            assert_eq!(
+                regions[active].width, 1920,
+                "active slot {} full width",
+                active
+            );
+            assert_eq!(regions[active].x, 0, "active slot {} at x=0", active);
+        }
+    }
+
+    #[test]
+    fn swap_layout_inactive_below_active() {
+        // Inactive slots are always positioned below the active slot's bottom edge
+        for active in 0..4 {
+            let regions = swap_layout_positions((0, 0, 1920, 1080), active, 4);
+            let active_bottom = regions[active].y + regions[active].height;
+            for (i, region) in regions.iter().enumerate() {
+                if i != active {
+                    assert_eq!(
+                        region.y, active_bottom,
+                        "inactive slot {} y should equal active bottom",
+                        i
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn swap_layout_thumbnails_have_aspect_ratio_for_clicking() {
+        // Sanity check: in the canonical 1920x1080 monitor case, each
+        // thumbnail must be wide enough to be clickable as a target
+        // (the user clicks on the bottom strip to swap). At least
+        // 200px wide and 100px tall is the ISBoxer convention.
+        for active in 0..4 {
+            let regions = swap_layout_positions((0, 0, 1920, 1080), active, 4);
+            for (i, r) in regions.iter().enumerate() {
+                if i != active {
+                    assert!(r.width >= 200, "slot {} thumb width {} < 200", i, r.width);
+                    assert!(
+                        r.height >= 100,
+                        "slot {} thumb height {} < 100",
+                        i,
+                        r.height
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn swap_layout_region_count_matches_slot_count() {
+        // The runtime calls swap_layout_positions(monitor, active, n)
+        // and then iterates windows.len() times. If n == 0 the function
+        // must return an empty Vec, not panic. This is the contract
+        // that fixes the post-discovery hotkey indexing path.
+        assert_eq!(swap_layout_positions((0, 0, 1920, 1080), 0, 0).len(), 0);
+        for n in 1..=8 {
+            let r = swap_layout_positions((0, 0, 1920, 1080), 0, n);
+            assert_eq!(r.len(), n, "for n={}", n);
+        }
     }
 }

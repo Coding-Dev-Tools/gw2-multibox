@@ -34,12 +34,8 @@ impl HotkeyManager {
     pub fn register(&mut self, slot_count: usize, base_vk: u32) -> Result<()> {
         for i in 0..slot_count {
             unsafe {
-                let result = RegisterHotKey(
-                    0 as HWND,
-                    HOTKEY_BASE_ID + i as i32,
-                    0,
-                    base_vk + i as UINT,
-                );
+                let result =
+                    RegisterHotKey(0 as HWND, HOTKEY_BASE_ID + i as i32, 0, base_vk + i as UINT);
                 if result == 0 {
                     eprintln!(
                         "Warning: Failed to register slot {} hotkey (VK 0x{:X}, error {})",
@@ -104,17 +100,32 @@ pub enum HotkeyEvent {
     BroadcastToggle,
 }
 
+const TIMER_FOCUS_POLL: usize = 1;
+/// Poll interval in milliseconds for detecting focus changes (alt+Tab, clicks).
+/// 250ms provides responsive detection without excessive CPU usage.
+const FOCUS_POLL_INTERVAL_MS: u32 = 250;
+
 /// Run the message loop and dispatch hotkey events to the callback.
 /// The callback receives a [`HotkeyEvent`] for each registered hotkey.
-/// Using a single callback avoids the borrow-checker issue of trying
-/// to mutably borrow the same state from two FnMut closures.
-pub fn run_loop<F>(slot_count: usize, mut on_event: F, tray_hwnd: Option<HWND>)
-where
+/// If `poll_fn` is Some, a 500ms timer is set and `poll_fn()` is called
+/// on each WM_TIMER tick — used for focus-polling in swap mode.
+pub fn run_loop<F, P>(
+    slot_count: usize,
+    mut on_event: F,
+    tray_hwnd: Option<HWND>,
+    mut poll_fn: Option<P>,
+) where
     F: FnMut(HotkeyEvent),
+    P: FnMut(),
 {
     unsafe {
+        // Set up a repeating timer for focus polling
+        if poll_fn.is_some() {
+            SetTimer(0 as HWND, TIMER_FOCUS_POLL, FOCUS_POLL_INTERVAL_MS, None);
+        }
+
         let mut msg: MSG = mem::zeroed();
-        let _ = tray_hwnd; // tray messages handled by WndProc
+        let _ = tray_hwnd;
         while GetMessageW(&mut msg, 0 as HWND, 0, 0) != 0 {
             if msg.message == WM_HOTKEY {
                 let id = msg.wParam as i32;
@@ -126,8 +137,18 @@ where
                 } else if id == BROADCAST_TOGGLE_ID {
                     on_event(HotkeyEvent::BroadcastToggle);
                 }
+            } else if msg.message == WM_TIMER && msg.wParam == TIMER_FOCUS_POLL {
+                #[allow(clippy::collapsible_if)]
+                if let Some(ref mut f) = poll_fn {
+                    f();
+                }
             }
             DispatchMessageW(&msg);
+        }
+
+        // Clean up the timer
+        if poll_fn.is_some() {
+            KillTimer(0 as HWND, TIMER_FOCUS_POLL);
         }
     }
 }

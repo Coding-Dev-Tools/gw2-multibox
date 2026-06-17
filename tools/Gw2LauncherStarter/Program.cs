@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.IO;
 
 namespace Gw2LauncherStarter
 {
@@ -19,19 +20,19 @@ namespace Gw2LauncherStarter
                 gw2Path = args[0];
             }
 
-            Console.WriteLine($"Launching {gw2Path} in STA mode...");
+            Console.WriteLine("Launching " + gw2Path + " in STA mode...");
 
             var psi = new ProcessStartInfo
             {
                 FileName = gw2Path,
                 UseShellExecute = false,
-                WorkingDirectory = System.IO.Path.GetDirectoryName(gw2Path)
+                WorkingDirectory = Path.GetDirectoryName(gw2Path)
             };
 
             var process = Process.Start(psi);
             if (process != null)
             {
-                Console.WriteLine($"Launched with PID: {process.Id}");
+                Console.WriteLine("Launched with PID: " + process.Id);
                 process.WaitForExit();
             }
             else

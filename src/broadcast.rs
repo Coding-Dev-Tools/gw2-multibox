@@ -16,13 +16,13 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use winapi::shared::minwindef::{LPARAM, LRESULT, WPARAM};
 use winapi::shared::windef::{HHOOK, HWND};
 use winapi::um::winuser::{
-    CallNextHookEx, PostMessageW, SendInput, SetWindowsHookExW, UnhookWindowsHookEx,
-    KBDLLHOOKSTRUCT, KEYEVENTF_KEYUP, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_RCONTROL,
-    VK_RMENU, VK_RSHIFT, VK_RWIN, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN,
-    WM_SYSKEYUP,
+    CallNextHookEx, GetForegroundWindow, KBDLLHOOKSTRUCT, KEYEVENTF_KEYUP, PostMessageW, SendInput,
+    SetForegroundWindow, SetWindowsHookExW, UnhookWindowsHookEx, VK_LCONTROL, VK_LMENU, VK_LSHIFT,
+    VK_LWIN, VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_RWIN, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP,
+    WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
 
-use crate::config::BroadcastConfig;
+use crate::config::{BroadcastConfig, DeliveryMode};
 
 /// Modifier VK codes that should not be forwarded.
 const MODIFIER_VKS: &[u32] = &[
@@ -42,6 +42,7 @@ struct HookState {
     active_slot: AtomicUsize,
     windows: UnsafeCell<Vec<HWND>>,
     hook: UnsafeCell<HHOOK>,
+    delivery_mode: UnsafeCell<DeliveryMode>,
 }
 
 // Safety: The hook callback runs on a single thread and we ensure
@@ -53,6 +54,7 @@ static STATE: HookState = HookState {
     active_slot: AtomicUsize::new(0),
     windows: UnsafeCell::new(Vec::new()),
     hook: UnsafeCell::new(std::ptr::null_mut()),
+    delivery_mode: UnsafeCell::new(DeliveryMode::PostMessage),
 };
 
 /// State for broadcast management.
@@ -61,20 +63,22 @@ pub struct BroadcastManager {
     hook: Option<HHOOK>,
     windows: Vec<HWND>,
     slot_count: usize,
-    #[allow(dead_code)]
     config: BroadcastConfig,
+    delivery_mode: DeliveryMode,
 }
 
 impl BroadcastManager {
     /// Create a new broadcast manager.
     pub fn new(config: BroadcastConfig, windows: Vec<HWND>) -> Self {
         let slot_count = windows.len();
+        let delivery_mode = config.delivery_mode.clone();
         Self {
             enabled: false,
             hook: None,
             windows,
             slot_count,
             config,
+            delivery_mode,
         }
     }
 
@@ -84,9 +88,10 @@ impl BroadcastManager {
             return Ok(());
         }
 
-        // Store windows in static for the hook callback
+        // Store windows and delivery mode in static for the hook callback
         unsafe {
             *STATE.windows.get() = self.windows.clone();
+            *STATE.delivery_mode.get() = self.delivery_mode.clone();
         }
 
         // Install the keyboard hook
@@ -151,7 +156,7 @@ impl BroadcastManager {
     }
 
     /// Set the active slot index (0-based).
-    pub fn set_active_slot(&mut self, index: usize) {
+    pub fn set_active_slot(&self, index: usize) {
         if index < self.slot_count {
             STATE.active_slot.store(index, Ordering::SeqCst);
             crate::log::debug(&format!("Active slot set to {}", index));
@@ -161,6 +166,19 @@ impl BroadcastManager {
     /// Get the active slot index.
     pub fn active_slot(&self) -> usize {
         STATE.active_slot.load(Ordering::SeqCst)
+    }
+
+    /// Set the delivery mode for broadcast.
+    pub fn set_delivery_mode(&mut self, mode: DeliveryMode) {
+        self.delivery_mode = mode.clone();
+        unsafe {
+            *STATE.delivery_mode.get() = mode;
+        }
+    }
+
+    /// Get the current delivery mode.
+    pub fn delivery_mode(&self) -> &DeliveryMode {
+        &self.delivery_mode
     }
 
     /// Check if a key should be forwarded based on config.
@@ -255,13 +273,33 @@ unsafe extern "system" fn keyboard_hook_proc(
     }
 }
 
-/// Forward a key event to all non-active slot windows using both
-/// PostMessageW and SendInput. PostMessageW handles games that read
-/// from the standard Windows message queue. SendInput handles games
-/// that use DirectInput or Raw Input (which GW2 uses) by synthesizing
-/// input at the OS level. Each target window gets a brief focus shift
-/// so SendInput is delivered to it.
+/// Forward a key event to all non-active slot windows.
+/// Dispatches to either PostMessage (no focus change) or focus cycling
+/// based on the configured delivery mode.
+///
+/// # Safety
+///
+/// This is a Windows callback. Must not panic or allocate.
 unsafe fn broadcast_key_event(vk_code: u32, scan_code: u32, key_down: bool) {
+    unsafe {
+        let mode = (*STATE.delivery_mode.get()).clone();
+        match mode {
+            DeliveryMode::PostMessage => {
+                broadcast_key_event_postmessage(vk_code, scan_code, key_down);
+            }
+            DeliveryMode::FocusCycle => {
+                broadcast_key_event_focus(vk_code, scan_code, key_down);
+            }
+        }
+    }
+}
+
+/// Forward a key event using PostMessage — no focus switching required.
+/// Posts WM_KEYDOWN/WM_KEYUP directly to each non-active window's message queue.
+/// This is the preferred mode for swap layout since it never changes focus.
+/// Note: May not work with all games (DirectInput/Raw Input games may ignore
+/// posted messages). Use FocusCycle mode as fallback if keys aren't delivered.
+unsafe fn broadcast_key_event_postmessage(vk_code: u32, scan_code: u32, key_down: bool) {
     unsafe {
         let active_idx = STATE.active_slot.load(Ordering::SeqCst);
         let windows = &*STATE.windows.get();
@@ -269,15 +307,43 @@ unsafe fn broadcast_key_event(vk_code: u32, scan_code: u32, key_down: bool) {
             return;
         }
 
-        // Build the WM_KEYDOWN/UP lParam once
-        let (prev_state, trans_state) = if key_down { (0u8, 0u8) } else { (1u8, 1u8) };
-        let lparam =
-            make_lparam(1, scan_code as u16, 0, 0, prev_state, trans_state) as LPARAM;
         let msg = if key_down { WM_KEYDOWN } else { WM_KEYUP };
+        // Build lParam: scan code in bits 16-23, repeat count=1 in bits 0-15
+        let lparam = ((scan_code & 0xFF) << 16) | 1;
+        // For WM_KEYUP, set transition state (bit 31) and previous state (bit 30)
+        let lparam = if key_down {
+            lparam
+        } else {
+            lparam | (1 << 30) | (1 << 31)
+        };
 
-        // Build the SendInput keyboard event once. INPUT is a union
-        // with a 4-byte type discriminator; we need a properly aligned
-        // INPUT array, so we wrap the KEYBDINPUT in an INPUT.
+        for (idx, hwnd) in windows.iter().enumerate() {
+            if idx == active_idx {
+                continue;
+            }
+            if hwnd.is_null() {
+                continue;
+            }
+            PostMessageW(*hwnd, msg, vk_code as usize, lparam as isize);
+        }
+    }
+}
+
+/// Forward a key event using focus cycling — brief SetForegroundWindow per target.
+/// This is the legacy method that works with DirectInput/Raw Input games
+/// but causes visible focus flicker. Used as fallback when PostMessage doesn't
+/// deliver keys to the target game.
+unsafe fn broadcast_key_event_focus(vk_code: u32, scan_code: u32, key_down: bool) {
+    unsafe {
+        let active_idx = STATE.active_slot.load(Ordering::SeqCst);
+        let windows = &*STATE.windows.get();
+        if windows.is_empty() {
+            return;
+        }
+
+        let original_fg = GetForegroundWindow();
+
+        // Build the SendInput keyboard event
         let mut input: winapi::um::winuser::INPUT = std::mem::zeroed();
         input.type_ = 1; // INPUT_KEYBOARD
         let kbd = input.u.ki_mut();
@@ -286,29 +352,41 @@ unsafe fn broadcast_key_event(vk_code: u32, scan_code: u32, key_down: bool) {
         kbd.dwFlags = if key_down { 0u32 } else { KEYEVENTF_KEYUP };
         kbd.time = 0;
         kbd.dwExtraInfo = 0;
-        SendInput(
-            1,
-            &mut input as *mut _ as *mut _,
-            std::mem::size_of::<winapi::um::winuser::INPUT>() as i32,
-        );
 
-        // PostMessageW to all non-active windows. SendInput already
-        // went to the foreground (active) window. For other windows
-        // that are not in focus, PostMessageW may not be enough for
-        // DirectInput games, but it's the best we can do without
-        // focus stealing which is unreliable.
+        // Send to each non-active window via focus cycling
         for (idx, hwnd) in windows.iter().enumerate() {
             if idx == active_idx {
                 continue;
             }
-            if !hwnd.is_null() {
-                PostMessageW(*hwnd, msg, vk_code as WPARAM, lparam);
+            if hwnd.is_null() {
+                continue;
             }
+
+            // Briefly focus the target window
+            SetForegroundWindow(*hwnd);
+            // Small delay so the window processes the focus change
+            std::thread::sleep(std::time::Duration::from_millis(30));
+
+            // Synthesize the key press while the window is focused
+            SendInput(
+                1,
+                &mut input as *mut _ as *mut _,
+                std::mem::size_of::<winapi::um::winuser::INPUT>() as i32,
+            );
+
+            // Brief delay for the input to be delivered
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        // Restore original foreground window
+        if !original_fg.is_null() {
+            SetForegroundWindow(original_fg);
         }
     }
 }
 
 /// Create an lParam value for keyboard messages.
+#[allow(dead_code)]
 fn make_lparam(
     repeat_count: u16,
     scan_code: u16,
@@ -355,6 +433,7 @@ mod tests {
             keys: vec![],
             toggle_key: 0x78, // F9
             target_process: None,
+            delivery_mode: crate::config::DeliveryMode::PostMessage,
         };
         let mgr = BroadcastManager::new(config, vec![]);
         assert!(!mgr.is_enabled());
