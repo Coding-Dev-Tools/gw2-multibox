@@ -7,7 +7,7 @@ you switch between them with hotkeys.
 > Compatible with ISBoxer/Inner Space — use whichever tool you prefer per
 > session.
 
-[![CI](https://github.com/Coding-Dev-Tools/gw2-multibox/actions/workflows/rust.yml/badge.svg)](https://github.com/Coding-Dev-Tools/gw2-multibox/actions/workflows/rust.yml)
+[![CI](https://github.com/Coding-Dev-Tools/gw2-multibox/actions/workflows/ci.yml/badge.svg)](https://github.com/Coding-Dev-Tools/gw2-multibox/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Rust 1.85+](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org)
 
