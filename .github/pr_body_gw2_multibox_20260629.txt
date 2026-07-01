@@ -1,0 +1,15 @@
+## Automated CI Improvements
+
+This PR adds a modern CI workflow that replaces the outdated `rust.yml` with a more robust configuration:
+
+### Changes
+- **New CI workflow** (`.github/workflows/ci.yml`): Uses `dtolnay/rust-toolchain@stable` action for reliable toolchain installation instead of manual `rustup` commands
+- **Cargo cache**: Includes `~/.rustup` in cache paths for faster builds
+- **Build verification**: Runs `cargo build --verbose` to catch compilation issues early
+- **Code quality**: Runs `cargo fmt --all -- --check` and `cargo clippy -- -D warnings` to enforce formatting and linting standards
+- **Branch support**: Works on both `main` and `master` branches for PRs and pushes
+
+### Why this improves things
+The old `rust.yml` used manual `rustup` commands which can be flaky on GitHub Actions runners. The new workflow uses the official `dtolnay/rust-toolchain` action which is more reliable and provides better caching.
+
+This addresses the build failures observed locally (missing `ucrt.lib` during linking) by ensuring the CI environment is properly configured.
