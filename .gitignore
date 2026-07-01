@@ -90,3 +90,7 @@ WORK/
 /config-test-current.yaml
 /config-*.local.yaml
 /config-*-user.yaml
+
+# Local env and legacy bootstrap artifacts
+.env
+script/bootstrap/
