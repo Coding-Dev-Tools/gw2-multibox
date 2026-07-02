@@ -79,3 +79,61 @@ pub fn launch(profile: &GameProfile, extra_args: Option<&Vec<String>>) -> Result
         Ok(pid)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_profile() -> GameProfile {
+        GameProfile {
+            name: "test".into(),
+            exe_path: r"C:\Games\gw2\Gw2-64.exe".into(),
+            args: vec!["-autologin".into(), "-windowed".into()],
+            working_dir: None,
+            window_ready_delay_ms: None,
+            launcher_mode: false,
+            game_process_name: None,
+            kill_mutex: None,
+        }
+    }
+
+    #[test]
+    fn build_command_line_no_extra_args() {
+        let profile = test_profile();
+        let cmd = build_command_line(&profile, None);
+        assert!(cmd.starts_with(r#""C:\Games\gw2\Gw2-64.exe""#));
+        assert!(cmd.contains("-autologin"));
+        assert!(cmd.contains("-windowed"));
+    }
+
+    #[test]
+    fn build_command_line_with_extra_args() {
+        let profile = test_profile();
+        let extra = vec!["-mapload".to_string(), "test_map".to_string()];
+        let cmd = build_command_line(&profile, Some(&extra));
+        assert!(cmd.contains("-mapload"));
+        assert!(cmd.contains("test_map"));
+    }
+
+    #[test]
+    fn build_command_line_no_args() {
+        let profile = GameProfile {
+            args: vec![],
+            ..test_profile()
+        };
+        let cmd = build_command_line(&profile, None);
+        // Should return just the quoted exe path
+        assert_eq!(cmd, r#""C:\Games\gw2\Gw2-64.exe""#);
+    }
+
+    #[test]
+    fn build_command_line_empty_extra_args() {
+        let profile = test_profile();
+        let extra: Vec<String> = vec![];
+        let cmd = build_command_line(&profile, Some(&extra));
+        // Should be same as no extra args
+        assert!(cmd.starts_with(r#""C:\Games\gw2\Gw2-64.exe""#));
+        assert!(cmd.contains("-autologin"));
+        assert!(cmd.contains("-windowed"));
+    }
+}
