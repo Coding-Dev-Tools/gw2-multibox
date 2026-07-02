@@ -114,4 +114,26 @@ mod tests {
         assert!(cmd.contains("-mapload"));
         assert!(cmd.contains("test_map"));
     }
+
+    #[test]
+    fn build_command_line_no_args() {
+        let profile = GameProfile {
+            args: vec![],
+            ..test_profile()
+        };
+        let cmd = build_command_line(&profile, None);
+        // Should return just the quoted exe path
+        assert_eq!(cmd, r#""C:\Games\gw2\Gw2-64.exe""#);
+    }
+
+    #[test]
+    fn build_command_line_empty_extra_args() {
+        let profile = test_profile();
+        let extra: Vec<String> = vec![];
+        let cmd = build_command_line(&profile, Some(&extra));
+        // Should be same as no extra args
+        assert!(cmd.starts_with(r#""C:\Games\gw2\Gw2-64.exe""#));
+        assert!(cmd.contains("-autologin"));
+        assert!(cmd.contains("-windowed"));
+    }
 }
