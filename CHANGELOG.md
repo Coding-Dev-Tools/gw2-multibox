@@ -25,6 +25,11 @@
 - `AGENTS.md` describing architecture, ToS constraints, and contribution rules
 
 ### Fixed
+- `config::resolve()` now rejects a team with zero slots instead of
+  succeeding silently; such a config would launch nothing (silent no-op).
+- Corrected the `broadcast.delivery_mode` doc comment: the actual default
+  is `focus_cycle` (required for DirectInput/Raw Input games like GW2),
+  not `postmessage` as the comment previously stated.
 - Compilation errors in multi-game preset path strings (raw strings)
 - `launcher.rs` was passing the full command line as the executable parameter
   to `CreateProcessW`; now correctly passes `exe_path` as the application
