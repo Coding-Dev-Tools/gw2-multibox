@@ -143,8 +143,10 @@ pub struct BroadcastConfig {
     #[serde(default)]
     pub target_process: Option<String>,
     /// How keys are delivered to non-active windows.
-    /// "postmessage" (default) = no focus switching, preferred for swap layout.
-    /// "focus_cycle" = brief focus change per target, works with all games.
+    /// "focus_cycle" (default) = brief focus change per target; the only
+    /// method that works with DirectInput/Raw Input games like GW2.
+    /// "postmessage" = no focus switching, but only works with games that
+    /// read input from the window message queue (not GW2).
     #[serde(default)]
     pub delivery_mode: DeliveryMode,
 }
@@ -308,6 +310,15 @@ pub fn resolve(config: &Config) -> Result<ResolvedConfig<'_>> {
         if regions.insert(r.name.as_str(), r).is_some() {
             return Err(anyhow::anyhow!("Duplicate region name: {}", r.name));
         }
+    }
+
+    // A team with no slots resolves "successfully" but launches nothing —
+    // a silent no-op. Treat it as a configuration error so it surfaces early.
+    if config.team.slots.is_empty() {
+        return Err(anyhow::anyhow!(
+            "Team '{}' has no slots; nothing would be launched",
+            config.team.name
+        ));
     }
 
     let mut slot_to_profile: HashMap<usize, &GameProfile> = HashMap::new();
@@ -1151,6 +1162,17 @@ mod tests {
         let mut cfg = minimal_config();
         cfg.layout.regions[0].width = 0;
         assert!(resolve(&cfg).is_err());
+    }
+
+    #[test]
+    fn resolve_empty_slots_fails() {
+        let mut cfg = minimal_config();
+        cfg.team.slots.clear();
+        let result = resolve(&cfg);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(e.to_string().contains("no slots"), "unexpected error: {e}");
+        }
     }
 
     #[test]
