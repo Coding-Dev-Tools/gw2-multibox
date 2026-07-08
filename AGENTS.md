@@ -109,7 +109,9 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
 ```
 
-CI runs on Windows-latest with stable-x86_64-pc-windows-msvc.
+CI runs on Windows-latest with stable-x86_64-pc-windows-msvc. The CI workflow
+(`.github/workflows/ci.yml`) runs `cargo build`, `cargo fmt --check`,
+`cargo clippy`, and `cargo test` on every push/PR to `main`.
 
 ## How to make changes
 
