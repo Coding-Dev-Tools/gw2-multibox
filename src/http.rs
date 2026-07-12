@@ -202,16 +202,10 @@ fn handle_client(
                     }
                     // Save and respond
                     if let Err(e) = crate::config::resolve(&new_cfg) {
-                        let resp = format!(
-                            r#"{{"ok":false,"error":"{}"}}"#,
-                            e.to_string().replace('"', "\\\"")
-                        );
+                        let resp = error_body(&e.to_string());
                         respond_json(&mut stream, 400, &resp)?;
                     } else if let Err(e) = new_cfg.save(&config_path) {
-                        let resp = format!(
-                            r#"{{"ok":false,"error":"{}"}}"#,
-                            e.to_string().replace('"', "\\\"")
-                        );
+                        let resp = error_body(&e.to_string());
                         respond_json(&mut stream, 500, &resp)?;
                     } else {
                         let mut guard = state.lock().unwrap();
@@ -224,10 +218,7 @@ fn handle_client(
                     }
                 }
                 Err(e) => {
-                    let resp = format!(
-                        r#"{{"ok":false,"error":"JSON parse: {}"}}"#,
-                        e.to_string().replace('"', "\\\"")
-                    );
+                    let resp = error_body(&e.to_string());
                     respond_json(&mut stream, 400, &resp)?;
                 }
             }
@@ -238,16 +229,10 @@ fn handle_client(
             match serde_json::from_str::<Config>(&body) {
                 Ok(new_cfg) => {
                     if let Err(e) = crate::config::resolve(&new_cfg) {
-                        let resp = format!(
-                            r#"{{"ok":false,"error":"{}"}}"#,
-                            e.to_string().replace('"', "\\\"")
-                        );
+                        let resp = error_body(&e.to_string());
                         respond_json(&mut stream, 400, &resp)?;
                     } else if let Err(e) = new_cfg.save(&config_path) {
-                        let resp = format!(
-                            r#"{{"ok":false,"error":"{}"}}"#,
-                            e.to_string().replace('"', "\\\"")
-                        );
+                        let resp = error_body(&e.to_string());
                         respond_json(&mut stream, 500, &resp)?;
                     } else {
                         let mut guard = state.lock().unwrap();
@@ -257,10 +242,7 @@ fn handle_client(
                     }
                 }
                 Err(e) => {
-                    let resp = format!(
-                        r#"{{"ok":false,"error":"JSON parse: {}"}}"#,
-                        e.to_string().replace('"', "\\\"")
-                    );
+                    let resp = error_body(&e.to_string());
                     respond_json(&mut stream, 400, &resp)?;
                 }
             }
@@ -269,6 +251,15 @@ fn handle_client(
     }
 
     Ok(())
+}
+
+/// Build a JSON error-response body, properly escaping `msg` so that
+/// backslashes (common in Windows exe paths such as `C:\Games\...`) and
+/// quotes do not produce malformed JSON that the config UI cannot parse.
+/// The old manual `format!` only escaped `"`, which emitted invalid JSON
+/// (e.g. `\G` from a path) and broke `JSON.parse` in the web UI.
+fn error_body(msg: &str) -> String {
+    serde_json::json!({ "ok": false, "error": msg }).to_string()
 }
 
 fn respond(stream: &mut TcpStream, code: u16, content_type: &str, body: &str) -> Result<()> {
@@ -294,4 +285,30 @@ fn respond(stream: &mut TcpStream, code: u16, content_type: &str, body: &str) ->
 
 fn respond_json(stream: &mut TcpStream, code: u16, body: &str) -> Result<()> {
     respond(stream, code, "application/json", body)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_body_emits_valid_json_with_backslash_and_quote() {
+        // A typical Windows validation error carries backslashes (exe paths)
+        // and may carry quotes (profile names). The old manual formatter
+        // produced invalid JSON for these, breaking JSON.parse in the UI.
+        let msg =
+            r#"Game profile 'x': exe_path does not exist: C:\Games\MyGame\game.exe and "quoted""#;
+        let body = error_body(msg);
+        let v: serde_json::Value =
+            serde_json::from_str(&body).expect("error_body must emit valid JSON");
+        assert_eq!(v["ok"], serde_json::json!(false));
+        assert_eq!(v["error"], serde_json::json!(msg));
+    }
+
+    #[test]
+    fn error_body_round_trips_message_exactly() {
+        let msg = "Slot 2 references unknown account 'Acct\"X'";
+        let v: serde_json::Value = serde_json::from_str(&error_body(msg)).unwrap();
+        assert_eq!(v["error"].as_str().unwrap(), msg);
+    }
 }
