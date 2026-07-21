@@ -624,12 +624,12 @@ pub fn detect_wow_path() -> Option<String> {
                     let loc = String::from_utf16_lossy(&buf)
                         .trim_end_matches('\0')
                         .to_string();
-                    let exe = PathBuf::from(loc.clone()).join(r"_retail_\WorldOf Warcraft.exe");
+                    let exe = PathBuf::from(loc.clone()).join(r"_retail_\Wow.exe");
                     if exe.exists() {
                         return Some(exe.to_string_lossy().to_string());
                     }
                     // Try classic
-                    let exe_classic = PathBuf::from(loc).join(r"_classic_\WorldOf Warcraft.exe");
+                    let exe_classic = PathBuf::from(loc).join(r"_classic_\Wow.exe");
                     if exe_classic.exists() {
                         return Some(exe_classic.to_string_lossy().to_string());
                     }
@@ -725,9 +725,8 @@ pub fn detect_eve_path() -> Option<String> {
 
 /// Generate a WoW-optimized starter config.
 pub fn wow_template() -> Config {
-    let exe_path = detect_wow_path().unwrap_or_else(|| {
-        r"C:\Program Files\World of Warcraft\_retail_\WorldOf Warcraft.exe".to_string()
-    });
+    let exe_path = detect_wow_path()
+        .unwrap_or_else(|| r"C:\Program Files\World of Warcraft\_retail_\Wow.exe".to_string());
 
     let (mon_w, mon_h) = get_primary_monitor_size();
     let (region_w, region_h) = (mon_w / 2, mon_h / 2);

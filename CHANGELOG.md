@@ -37,6 +37,12 @@
 - Working tree: `.gitignore` now covers `target/`, vendored C# source, build
   artifacts, and personal-environment scripts (608 untracked items → 0)
 
+- `detect_wow_path()` (WoW preset) now resolves the current executable
+  name `Wow.exe` for both `_retail_` and `_classic_`; the previous literal
+  `WorldOf Warcraft.exe` had a spurious space and used the retired
+  pre-8.0 client name, so auto-detection always failed and silently
+  fell back to a non-existent path.
+
 ## [0.1.0] - Initial Release
 
 ### Added
