@@ -46,3 +46,7 @@ jobs:
 
       - name: Run tests
         run: cargo test --verbose
+
+      - name: Verify SHA pins
+        shell: bash
+        run: bash scripts/verify-sha-pins.sh
