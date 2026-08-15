@@ -23,7 +23,7 @@ jobs:
           rustup default stable-x86_64-pc-windows-msvc
 
       - name: Cache cargo registry and target
-        uses: actions/cache@00578b4852ec0770e10f17e8e3e21c0b40e03c9a # v4.3.0
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.cargo/registry
