@@ -54,10 +54,17 @@ jobs:
           "$dst  $hash" | Out-File -FilePath "target\release\SHA256SUMS.txt" -Encoding ascii
           Get-Content "target\release\SHA256SUMS.txt"
 
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          choco install nsis --no-progress -y
+          # Ensure makensis is on PATH for the next step
+          echo "C:\Program Files (x86)\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
       - name: Build NSIS installer
-        uses: NSIS-Dev/NSIS-Action@v2
-        with:
-          script: installer/multisbox.nsi
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\NSIS\makensis.exe" installer/multisbox.nsi
 
       - name: Rename installer
         shell: pwsh
@@ -76,7 +83,7 @@ jobs:
           Get-Content "target\release\SHA256SUMS.txt"
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           name: ${{ github.ref_name }}
           draft: false
