@@ -72,7 +72,7 @@ impl TrayManager {
             nid.uCallbackMessage = TRAY_ICON_MESSAGE;
 
             // Set tooltip
-            let tooltip = format!("Multisbox v{}", version);
+            let tooltip = format!("Multisbox v{version}");
             let wide_tooltip = to_wide(&tooltip);
             let copy_len = wide_tooltip.len().min(128);
             ptr::copy_nonoverlapping(wide_tooltip.as_ptr(), nid.szTip.as_mut_ptr(), copy_len);

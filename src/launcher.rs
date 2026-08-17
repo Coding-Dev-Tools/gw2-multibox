@@ -21,7 +21,7 @@ pub fn build_command_line(profile: &GameProfile, extra_args: Option<&Vec<String>
     if args_str.is_empty() {
         exe_quoted
     } else {
-        format!("{} {}", exe_quoted, args_str)
+        format!("{exe_quoted} {args_str}")
     }
 }
 

@@ -159,7 +159,7 @@ impl BroadcastManager {
     pub fn set_active_slot(&self, index: usize) {
         if index < self.slot_count {
             STATE.active_slot.store(index, Ordering::SeqCst);
-            crate::log::debug(&format!("Active slot set to {}", index));
+            crate::log::debug(&format!("Active slot set to {index}"));
         }
     }
 

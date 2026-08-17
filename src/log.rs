@@ -94,7 +94,7 @@ fn write(level: Level, msg: &str) {
     }
     // Also print to stderr for console mode
     if level >= Level::Warn {
-        eprint!("{}", line);
+        eprint!("{line}");
     }
 }
 

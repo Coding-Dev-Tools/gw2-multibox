@@ -77,7 +77,7 @@ fn parse_args() -> Result<Args> {
             .ok_or_else(|| anyhow::anyhow!("--ui-port requires a value"))?;
         ui_port = v
             .parse()
-            .map_err(|_| anyhow::anyhow!("Invalid port: {}", v))?;
+            .map_err(|_| anyhow::anyhow!("Invalid port: {v}"))?;
     }
 
     let config_path = raw
@@ -97,8 +97,7 @@ fn parse_args() -> Result<Args> {
 
 fn print_help() {
     println!(
-        "multisbox v{} — multiboxing launcher and window manager\n",
-        VERSION
+        "multisbox v{VERSION} — multiboxing launcher and window manager\n"
     );
     println!("USAGE:");
     println!("    multisbox [OPTIONS]");
@@ -170,7 +169,7 @@ fn run_list_windows() -> Result<()> {
 fn run_dry_run(config_path: &PathBuf) -> Result<()> {
     let config = Config::load(config_path)?;
     println!("=== Config Validated ===");
-    println!("Config: {:?}", config_path);
+    println!("Config: {config_path:?}");
     println!();
     let resolved = config::resolve(&config)?;
     println!(
@@ -183,7 +182,7 @@ fn run_dry_run(config_path: &PathBuf) -> Result<()> {
     print_launch_plan(&config, &resolved);
 
     for w in config::check_exe_paths(&config) {
-        eprintln!("Warning: {}", w);
+        eprintln!("Warning: {w}");
     }
     println!("\nDry run complete. No processes launched.");
     Ok(())
@@ -214,12 +213,12 @@ fn print_launch_plan(config: &Config, resolved: &config::ResolvedConfig) {
             "  Region:  {} -> ({},{} {}x{})",
             region.name, region.x, region.y, region.width, region.height
         );
-        println!("  Cmd:     {}", cmdline);
+        println!("  Cmd:     {cmdline}");
         if let Some(dir) = &profile.working_dir {
-            println!("  Cwd:     {}", dir);
+            println!("  Cwd:     {dir}");
         }
         if let Some(mutex_name) = &profile.kill_mutex {
-            println!("  Mutex:   {} (will kill)", mutex_name);
+            println!("  Mutex:   {mutex_name} (will kill)");
         }
         println!();
     }
@@ -228,38 +227,35 @@ fn print_launch_plan(config: &Config, resolved: &config::ResolvedConfig) {
 fn run_init(config_path: &PathBuf) -> Result<()> {
     if config_path.exists() {
         eprintln!(
-            "Refusing to overwrite existing file: {:?}\n\
-             Use a different path with -c, or delete the file first.",
-            config_path
+            "Refusing to overwrite existing file: {config_path:?}\n\
+             Use a different path with -c, or delete the file first."
         );
         std::process::exit(2);
     }
     let cfg = Config::template();
     cfg.save(config_path)?;
-    println!("Wrote starter config to {:?}", config_path);
+    println!("Wrote starter config to {config_path:?}");
     println!();
     println!("Next steps:");
     println!("  1. Edit the file and set your game path under game_profiles[0].exe_path");
     println!(
-        "  2. Run `multisbox -c {:?} --dry-run` to validate",
-        config_path
+        "  2. Run `multisbox -c {config_path:?} --dry-run` to validate"
     );
-    println!("  3. Run `multisbox -c {:?}` to launch", config_path);
+    println!("  3. Run `multisbox -c {config_path:?}` to launch");
     Ok(())
 }
 
 fn run_gw2_init(config_path: &PathBuf) -> Result<()> {
     if config_path.exists() {
         eprintln!(
-            "Refusing to overwrite existing file: {:?}\n\
-             Use a different path with -c, or delete the file first.",
-            config_path
+            "Refusing to overwrite existing file: {config_path:?}\n\
+             Use a different path with -c, or delete the file first."
         );
         std::process::exit(2);
     }
     let cfg = config::gw2_template();
     cfg.save(config_path)?;
-    println!("✓ GW2 config written to {:?}", config_path);
+    println!("✓ GW2 config written to {config_path:?}");
     println!();
     println!("Auto-detected:");
     println!("  Game path: {}", cfg.game_profiles[0].exe_path);
@@ -273,12 +269,10 @@ fn run_gw2_init(config_path: &PathBuf) -> Result<()> {
     println!("Next steps:");
     println!("  1. (Optional) Edit account names in config if different");
     println!(
-        "  2. Run `multisbox -c {:?} --dry-run` to validate",
-        config_path
+        "  2. Run `multisbox -c {config_path:?} --dry-run` to validate"
     );
     println!(
-        "  3. Run `multisbox -c {:?}` to launch 4 GW2 windows",
-        config_path
+        "  3. Run `multisbox -c {config_path:?}` to launch 4 GW2 windows"
     );
     println!();
     println!("Hotkeys: F1=Account1, F2=Account2, F3=Account3, F4=Account4");
@@ -288,15 +282,14 @@ fn run_gw2_init(config_path: &PathBuf) -> Result<()> {
 fn run_wow_init(config_path: &PathBuf) -> Result<()> {
     if config_path.exists() {
         eprintln!(
-            "Refusing to overwrite existing file: {:?}\n\
-             Use a different path with -c, or delete the file first.",
-            config_path
+            "Refusing to overwrite existing file: {config_path:?}\n\
+             Use a different path with -c, or delete the file first."
         );
         std::process::exit(2);
     }
     let cfg = config::wow_template();
     cfg.save(config_path)?;
-    println!("✓ WoW config written to {:?}", config_path);
+    println!("✓ WoW config written to {config_path:?}");
     println!();
     println!("Auto-detected:");
     println!("  Game path: {}", cfg.game_profiles[0].exe_path);
@@ -310,12 +303,10 @@ fn run_wow_init(config_path: &PathBuf) -> Result<()> {
     println!("Next steps:");
     println!("  1. (Optional) Edit account names in config if different");
     println!(
-        "  2. Run `multisbox -c {:?} --dry-run` to validate",
-        config_path
+        "  2. Run `multisbox -c {config_path:?} --dry-run` to validate"
     );
     println!(
-        "  3. Run `multisbox -c {:?}` to launch 4 WoW windows",
-        config_path
+        "  3. Run `multisbox -c {config_path:?}` to launch 4 WoW windows"
     );
     println!();
     println!("Hotkeys: F1=Account1, F2=Account2, F3=Account3, F4=Account4");
@@ -325,15 +316,14 @@ fn run_wow_init(config_path: &PathBuf) -> Result<()> {
 fn run_ffxiv_init(config_path: &PathBuf) -> Result<()> {
     if config_path.exists() {
         eprintln!(
-            "Refusing to overwrite existing file: {:?}\n\
-             Use a different path with -c, or delete the file first.",
-            config_path
+            "Refusing to overwrite existing file: {config_path:?}\n\
+             Use a different path with -c, or delete the file first."
         );
         std::process::exit(2);
     }
     let cfg = config::ffxiv_template();
     cfg.save(config_path)?;
-    println!("✓ FFXIV config written to {:?}", config_path);
+    println!("✓ FFXIV config written to {config_path:?}");
     println!();
     println!("Auto-detected:");
     println!("  Game path: {}", cfg.game_profiles[0].exe_path);
@@ -347,12 +337,10 @@ fn run_ffxiv_init(config_path: &PathBuf) -> Result<()> {
     println!("Next steps:");
     println!("  1. (Optional) Edit account names in config if different");
     println!(
-        "  2. Run `multisbox -c {:?} --dry-run` to validate",
-        config_path
+        "  2. Run `multisbox -c {config_path:?} --dry-run` to validate"
     );
     println!(
-        "  3. Run `multisbox -c {:?}` to launch 4 FFXIV windows",
-        config_path
+        "  3. Run `multisbox -c {config_path:?}` to launch 4 FFXIV windows"
     );
     println!();
     println!("Hotkeys: F1=Account1, F2=Account2, F3=Account3, F4=Account4");
@@ -362,15 +350,14 @@ fn run_ffxiv_init(config_path: &PathBuf) -> Result<()> {
 fn run_eve_init(config_path: &PathBuf) -> Result<()> {
     if config_path.exists() {
         eprintln!(
-            "Refusing to overwrite existing file: {:?}\n\
-             Use a different path with -c, or delete the file first.",
-            config_path
+            "Refusing to overwrite existing file: {config_path:?}\n\
+             Use a different path with -c, or delete the file first."
         );
         std::process::exit(2);
     }
     let cfg = config::eve_template();
     cfg.save(config_path)?;
-    println!("✓ EVE config written to {:?}", config_path);
+    println!("✓ EVE config written to {config_path:?}");
     println!();
     println!("Auto-detected:");
     println!("  Game path: {}", cfg.game_profiles[0].exe_path);
@@ -384,12 +371,10 @@ fn run_eve_init(config_path: &PathBuf) -> Result<()> {
     println!("Next steps:");
     println!("  1. (Optional) Edit account names in config if different");
     println!(
-        "  2. Run `multisbox -c {:?} --dry-run` to validate",
-        config_path
+        "  2. Run `multisbox -c {config_path:?} --dry-run` to validate"
     );
     println!(
-        "  3. Run `multisbox -c {:?}` to launch 4 EVE windows",
-        config_path
+        "  3. Run `multisbox -c {config_path:?}` to launch 4 EVE windows"
     );
     println!();
     println!("Hotkeys: F1=Account1, F2=Account2, F3=Account3, F4=Account4");
@@ -398,21 +383,21 @@ fn run_eve_init(config_path: &PathBuf) -> Result<()> {
 
 fn run_ui(config_path: PathBuf, port: u16) -> Result<()> {
     println!("=== Multisbox Config UI ===");
-    println!("Config: {:?}", config_path);
-    println!("URL:    http://127.0.0.1:{}", port);
+    println!("Config: {config_path:?}");
+    println!("URL:    http://127.0.0.1:{port}");
     println!();
     let server = http::Server::new(config_path)?;
-    log::info(&format!("UI server starting on port {}", port));
+    log::info(&format!("UI server starting on port {port}"));
 
     // Try to open the browser
-    let url = format!("http://127.0.0.1:{}", port);
+    let url = format!("http://127.0.0.1:{port}");
     #[cfg(windows)]
     {
         let _ = std::process::Command::new("cmd")
             .args(["/C", "start", "", &url])
             .spawn();
     }
-    println!("Open {} in your browser. Ctrl+C to exit.", url);
+    println!("Open {url} in your browser. Ctrl+C to exit.");
     server.serve(port)
 }
 
@@ -520,9 +505,9 @@ fn discover_remaining_windows(
 
 fn run_live(config_path: &PathBuf) -> Result<()> {
     let config = Config::load(config_path)?;
-    log::info(&format!("Loaded config from {:?}", config_path));
+    log::info(&format!("Loaded config from {config_path:?}"));
     println!("=== Multisbox Launcher ===");
-    println!("Config: {:?}", config_path);
+    println!("Config: {config_path:?}");
     println!(
         "Team: {} ({} slots)",
         config.team.name,
@@ -534,7 +519,7 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
 
     for w in config::check_exe_paths(&config) {
         log::warn(&w);
-        eprintln!("Warning: {}", w);
+        eprintln!("Warning: {w}");
     }
 
     let stagger = config.default_stagger_ms();
@@ -550,18 +535,16 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
     let _file_lock = match gw2_multibox::file_lock::SharedFileLock::new(gw2_dat_path) {
         Ok(lock) => {
             log::info(&format!(
-                "Pre-opened {} with FILE_SHARE_READ|WRITE|DELETE — multiple instances can now share",
-                gw2_dat_path
+                "Pre-opened {gw2_dat_path} with FILE_SHARE_READ|WRITE|DELETE — multiple instances can now share"
             ));
             println!("Pre-opened Gw2.dat with shared access (FileLocker).");
             Some(lock)
         }
         Err(e) => {
             log::warn(&format!(
-                "Could not pre-open {}: {} — second instance may fail",
-                gw2_dat_path, e
+                "Could not pre-open {gw2_dat_path}: {e} — second instance may fail"
             ));
-            eprintln!("Warning: Could not pre-open Gw2.dat: {}", e);
+            eprintln!("Warning: Could not pre-open Gw2.dat: {e}");
             None
         }
     };
@@ -601,7 +584,7 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
 
         match launcher::launch(first_profile, None) {
             Ok(pid) => {
-                log::info(&format!("Launcher PID = {}", pid));
+                log::info(&format!("Launcher PID = {pid}"));
             }
             Err(e) => {
                 eprintln!(
@@ -609,7 +592,7 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
                     first_profile.exe_path, e
                 );
                 eprintln!("Continuing — looking for already-running game windows...");
-                log::warn(&format!("Failed to launch launcher: {}", e));
+                log::warn(&format!("Failed to launch launcher: {e}"));
             }
         }
 
@@ -655,10 +638,9 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
 
         if positioned == 0 {
             eprintln!(
-                "ERROR: No {} windows found within 30s. Is the launcher running?",
-                game_name
+                "ERROR: No {game_name} windows found within 30s. Is the launcher running?"
             );
-            log::warn(&format!("No {} windows found within 30s", game_name));
+            log::warn(&format!("No {game_name} windows found within 30s"));
         } else {
             // Second pass: keep polling for game windows by process
             // name until we have slot_count or overall_timeout_ms
@@ -676,7 +658,7 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
                     }
                     windows.push(hwnd);
                     positioned += 1;
-                    println!("  Slot {} (second pass) found", positioned);
+                    println!("  Slot {positioned} (second pass) found");
                     log::info(&format!(
                         "Launcher-mode second pass: slot {} found (hwnd {:x})",
                         positioned, hwnd as usize
@@ -687,12 +669,10 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
                 }
             }
             println!(
-                "Found {}/{} windows. Hotkeys active for all {} slots.",
-                positioned, slot_count, slot_count
+                "Found {positioned}/{slot_count} windows. Hotkeys active for all {slot_count} slots."
             );
             log::info(&format!(
-                "Found {}/{} windows after launcher-mode second pass",
-                positioned, slot_count
+                "Found {positioned}/{slot_count} windows after launcher-mode second pass"
             ));
             // Pad with nulls so window indices align with slot indices
             // (the hotkey handler reads `windows[idx]` and checks
@@ -798,8 +778,7 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
                 }
                 Err(e) => {
                     log::warn(&format!(
-                        "Could not create per-account junction: {} (continuing without)",
-                        e
+                        "Could not create per-account junction: {e} (continuing without)"
                     ));
                 }
             }
@@ -838,8 +817,7 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
                     )?
                 } else {
                     log::warn(&format!(
-                        "Bypass DLL not found at {} — using direct launch (may fail)",
-                        bypass_dll
+                        "Bypass DLL not found at {bypass_dll} — using direct launch (may fail)"
                     ));
                     launcher::launch(profile, account.extra_args.as_ref())?
                 }
@@ -1056,20 +1034,18 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
             if (0x70..0x7B).contains(&vk) {
                 format!("F{}", vk - 0x70 + 1)
             } else {
-                format!("VK 0x{:X}", vk)
+                format!("VK 0x{vk:X}")
             }
         };
         let first = label(hotkey_base);
         let last = label(hotkey_base + active_count as u32 - 1);
         let found_now = windows.iter().filter(|h| !h.is_null()).count();
         println!(
-            "\nHotkeys registered: {}..{} to switch windows (F1-F5 are reserved for your game).",
-            first, last
+            "\nHotkeys registered: {first}..{last} to switch windows (F1-F5 are reserved for your game)."
         );
         if found_now < active_count {
             println!(
-                "Note: {}/{} slot windows are visible right now. Hotkeys for the missing slots will activate once their windows appear.",
-                found_now, active_count
+                "Note: {found_now}/{active_count} slot windows are visible right now. Hotkeys for the missing slots will activate once their windows appear."
             );
         }
         println!("Press Ctrl+C to exit.\n");
@@ -1122,8 +1098,7 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
             target_windows = discovered;
         } else {
             log::info(&format!(
-                "Broadcast: no '{}' windows found yet — will discover on F9 refresh",
-                proc
+                "Broadcast: no '{proc}' windows found yet — will discover on F9 refresh"
             ));
         }
     }
@@ -1131,8 +1106,8 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
 
     if config.broadcast.enabled {
         if let Err(e) = broadcast_mgr.enable() {
-            eprintln!("Warning: Failed to enable input broadcasting: {}", e);
-            log::warn(&format!("Failed to enable broadcasting: {}", e));
+            eprintln!("Warning: Failed to enable input broadcasting: {e}");
+            log::warn(&format!("Failed to enable broadcasting: {e}"));
         } else {
             println!(
                 "Input broadcasting enabled (toggle: VK 0x{:X}).",
@@ -1155,8 +1130,8 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
             tray_icon_hwnd = hwnd;
             let mut mgr = tray::TrayManager::new(hwnd);
             if let Err(e) = mgr.init(VERSION) {
-                eprintln!("Warning: Failed to initialize tray icon: {}", e);
-                log::warn(&format!("Failed to initialize tray icon: {}", e));
+                eprintln!("Warning: Failed to initialize tray icon: {e}");
+                log::warn(&format!("Failed to initialize tray icon: {e}"));
             } else {
                 println!("System tray icon initialized.");
                 log::info("System tray icon initialized");
@@ -1164,8 +1139,8 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
             Some(mgr)
         }
         Err(e) => {
-            eprintln!("Warning: Failed to create tray window: {}", e);
-            log::warn(&format!("Failed to create tray window: {}", e));
+            eprintln!("Warning: Failed to create tray window: {e}");
+            log::warn(&format!("Failed to create tray window: {e}"));
             None
         }
     };
@@ -1334,7 +1309,7 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
                 match broadcast_mgr.toggle() {
                     Ok(true) => println!("Input broadcasting: ON"),
                     Ok(false) => println!("Input broadcasting: OFF"),
-                    Err(e) => eprintln!("Failed to toggle broadcasting: {}", e),
+                    Err(e) => eprintln!("Failed to toggle broadcasting: {e}"),
                 }
             }
         },
@@ -1356,7 +1331,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
     if args.mode == Mode::Version {
-        println!("multisbox v{}", VERSION);
+        println!("multisbox v{VERSION}");
         return Ok(());
     }
 

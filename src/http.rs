@@ -46,10 +46,10 @@ impl Server {
 
     /// Start serving on 127.0.0.1:port. Blocks the calling thread.
     pub fn serve(self, port: u16) -> Result<()> {
-        let addr = format!("127.0.0.1:{}", port);
+        let addr = format!("127.0.0.1:{port}");
         let listener = TcpListener::bind(&addr)
-            .map_err(|e| anyhow::anyhow!("Failed to bind {}: {}", addr, e))?;
-        crate::log::info(&format!("Web UI listening on http://{}", addr));
+            .map_err(|e| anyhow::anyhow!("Failed to bind {addr}: {e}"))?;
+        crate::log::info(&format!("Web UI listening on http://{addr}"));
 
         for stream in listener.incoming() {
             match stream {
@@ -58,12 +58,12 @@ impl Server {
                     let path = self.config_path.clone();
                     thread::spawn(move || {
                         if let Err(e) = handle_client(stream, state, path) {
-                            crate::log::warn(&format!("HTTP client error: {}", e));
+                            crate::log::warn(&format!("HTTP client error: {e}"));
                         }
                     });
                 }
                 Err(e) => {
-                    crate::log::warn(&format!("HTTP accept error: {}", e));
+                    crate::log::warn(&format!("HTTP accept error: {e}"));
                 }
             }
         }
@@ -139,7 +139,7 @@ fn handle_client(
                     let mut new_cfg = cfg;
                     new_cfg.accounts = (1..=req.account_count)
                         .map(|i| crate::config::Account {
-                            name: format!("Account{}", i),
+                            name: format!("Account{i}"),
                             game_profile: new_cfg.game_profiles[0].name.clone(),
                             extra_args: None,
                         })

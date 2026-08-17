@@ -159,8 +159,7 @@ fn find_mutex_handle(pid: u32, needle_wide: &[u16]) -> io::Result<Option<usize>>
             continue;
         }
         return Err(io::Error::other(format!(
-            "NtQuerySystemInformation failed: status=0x{:x}",
-            status
+            "NtQuerySystemInformation failed: status=0x{status:x}"
         )));
     }
 

@@ -42,7 +42,7 @@ pub fn launch_with_inject(
     let wide_cmd = if args_str.is_empty() {
         exe_quoted.clone()
     } else {
-        format!("{} {}", exe_quoted, args_str)
+        format!("{exe_quoted} {args_str}")
     };
     let wide_cmd = to_wide(&wide_cmd);
 

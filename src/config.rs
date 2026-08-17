@@ -244,9 +244,9 @@ impl Config {
 
     pub fn load(path: &Path) -> Result<Self> {
         let s = std::fs::read_to_string(path)
-            .with_context(|| format!("Failed to read config {:?}", path))?;
+            .with_context(|| format!("Failed to read config {path:?}"))?;
         let cfg: Config = serde_yaml::from_str(&s)
-            .with_context(|| format!("Failed to parse config {:?}", path))?;
+            .with_context(|| format!("Failed to parse config {path:?}"))?;
         Ok(cfg)
     }
 
@@ -255,7 +255,7 @@ impl Config {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
-        std::fs::write(path, s).with_context(|| format!("Failed to write config {:?}", path))?;
+        std::fs::write(path, s).with_context(|| format!("Failed to write config {path:?}"))?;
         Ok(())
     }
 
@@ -1289,8 +1289,7 @@ mod tests {
         let base = default_hotkey_base();
         assert!(
             base >= 0x75,
-            "default hotkey base 0x{:X} is below F6 (0x75); would collide with game hotkeys",
-            base
+            "default hotkey base 0x{base:X} is below F6 (0x75); would collide with game hotkeys"
         );
     }
 

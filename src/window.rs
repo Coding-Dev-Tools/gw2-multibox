@@ -254,7 +254,7 @@ pub fn find_by_process_name(name: &str) -> Vec<WindowInfo> {
                     .to_string();
                 let path_lower = path.to_lowercase();
                 path_lower.ends_with(&name_lower)
-                    || path_lower.contains(&format!("\\{}", name_lower))
+                    || path_lower.contains(&format!("\\{name_lower}"))
             }
         })
         .collect()
@@ -520,9 +520,9 @@ mod tests {
         // Thumbnails: bottom row, 20% height
         for (i, region) in regions[1..4].iter().enumerate() {
             let slot = i + 1;
-            assert_eq!(region.y, 864, "slot {} y", slot);
-            assert_eq!(region.height, 216, "slot {} height", slot);
-            assert_eq!(region.width, 640, "slot {} width", slot); // 1920/3
+            assert_eq!(region.y, 864, "slot {slot} y");
+            assert_eq!(region.height, 216, "slot {slot} height");
+            assert_eq!(region.width, 640, "slot {slot} width"); // 1920/3
         }
         assert_eq!(regions[1].x, 0);
         assert_eq!(regions[2].x, 640);
@@ -540,8 +540,8 @@ mod tests {
 
         // Slots 0,1,3 are thumbnails
         for i in [0, 1, 3] {
-            assert_eq!(regions[i].y, 864, "slot {} y", i);
-            assert_eq!(regions[i].height, 216, "slot {} height", i);
+            assert_eq!(regions[i].y, 864, "slot {i} y");
+            assert_eq!(regions[i].height, 216, "slot {i} height");
         }
     }
 
@@ -607,10 +607,9 @@ mod tests {
             let regions = swap_layout_positions((0, 0, 1920, 1080), active, 4);
             assert_eq!(
                 regions[active].width, 1920,
-                "active slot {} full width",
-                active
+                "active slot {active} full width"
             );
-            assert_eq!(regions[active].x, 0, "active slot {} at x=0", active);
+            assert_eq!(regions[active].x, 0, "active slot {active} at x=0");
         }
     }
 
@@ -624,8 +623,7 @@ mod tests {
                 if i != active {
                     assert_eq!(
                         region.y, active_bottom,
-                        "inactive slot {} y should equal active bottom",
-                        i
+                        "inactive slot {i} y should equal active bottom"
                     );
                 }
             }
@@ -663,7 +661,7 @@ mod tests {
         assert_eq!(swap_layout_positions((0, 0, 1920, 1080), 0, 0).len(), 0);
         for n in 1..=8 {
             let r = swap_layout_positions((0, 0, 1920, 1080), 0, n);
-            assert_eq!(r.len(), n, "for n={}", n);
+            assert_eq!(r.len(), n, "for n={n}");
         }
     }
 }

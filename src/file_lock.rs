@@ -85,7 +85,7 @@ impl SharedFileLock {
             Some(handle) => Ok(SharedFileLock { handle }),
             None => Err(io::Error::new(
                 io::ErrorKind::NotFound,
-                format!("File not found: {}", path),
+                format!("File not found: {path}"),
             )),
         }
     }
