@@ -47,8 +47,8 @@ impl Server {
     /// Start serving on 127.0.0.1:port. Blocks the calling thread.
     pub fn serve(self, port: u16) -> Result<()> {
         let addr = format!("127.0.0.1:{port}");
-        let listener = TcpListener::bind(&addr)
-            .map_err(|e| anyhow::anyhow!("Failed to bind {addr}: {e}"))?;
+        let listener =
+            TcpListener::bind(&addr).map_err(|e| anyhow::anyhow!("Failed to bind {addr}: {e}"))?;
         crate::log::info(&format!("Web UI listening on http://{addr}"));
 
         for stream in listener.incoming() {

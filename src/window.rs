@@ -253,8 +253,7 @@ pub fn find_by_process_name(name: &str) -> Vec<WindowInfo> {
                     .trim_end_matches('\0')
                     .to_string();
                 let path_lower = path.to_lowercase();
-                path_lower.ends_with(&name_lower)
-                    || path_lower.contains(&format!("\\{name_lower}"))
+                path_lower.ends_with(&name_lower) || path_lower.contains(&format!("\\{name_lower}"))
             }
         })
         .collect()

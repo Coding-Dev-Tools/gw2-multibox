@@ -245,8 +245,8 @@ impl Config {
     pub fn load(path: &Path) -> Result<Self> {
         let s = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config {path:?}"))?;
-        let cfg: Config = serde_yaml::from_str(&s)
-            .with_context(|| format!("Failed to parse config {path:?}"))?;
+        let cfg: Config =
+            serde_yaml::from_str(&s).with_context(|| format!("Failed to parse config {path:?}"))?;
         Ok(cfg)
     }
 

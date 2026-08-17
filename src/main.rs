@@ -96,9 +96,7 @@ fn parse_args() -> Result<Args> {
 }
 
 fn print_help() {
-    println!(
-        "multisbox v{VERSION} — multiboxing launcher and window manager\n"
-    );
+    println!("multisbox v{VERSION} — multiboxing launcher and window manager\n");
     println!("USAGE:");
     println!("    multisbox [OPTIONS]");
     println!("    multisbox init [-c PATH]");
@@ -238,9 +236,7 @@ fn run_init(config_path: &PathBuf) -> Result<()> {
     println!();
     println!("Next steps:");
     println!("  1. Edit the file and set your game path under game_profiles[0].exe_path");
-    println!(
-        "  2. Run `multisbox -c {config_path:?} --dry-run` to validate"
-    );
+    println!("  2. Run `multisbox -c {config_path:?} --dry-run` to validate");
     println!("  3. Run `multisbox -c {config_path:?}` to launch");
     Ok(())
 }
@@ -268,12 +264,8 @@ fn run_gw2_init(config_path: &PathBuf) -> Result<()> {
     println!();
     println!("Next steps:");
     println!("  1. (Optional) Edit account names in config if different");
-    println!(
-        "  2. Run `multisbox -c {config_path:?} --dry-run` to validate"
-    );
-    println!(
-        "  3. Run `multisbox -c {config_path:?}` to launch 4 GW2 windows"
-    );
+    println!("  2. Run `multisbox -c {config_path:?} --dry-run` to validate");
+    println!("  3. Run `multisbox -c {config_path:?}` to launch 4 GW2 windows");
     println!();
     println!("Hotkeys: F1=Account1, F2=Account2, F3=Account3, F4=Account4");
     Ok(())
@@ -302,12 +294,8 @@ fn run_wow_init(config_path: &PathBuf) -> Result<()> {
     println!();
     println!("Next steps:");
     println!("  1. (Optional) Edit account names in config if different");
-    println!(
-        "  2. Run `multisbox -c {config_path:?} --dry-run` to validate"
-    );
-    println!(
-        "  3. Run `multisbox -c {config_path:?}` to launch 4 WoW windows"
-    );
+    println!("  2. Run `multisbox -c {config_path:?} --dry-run` to validate");
+    println!("  3. Run `multisbox -c {config_path:?}` to launch 4 WoW windows");
     println!();
     println!("Hotkeys: F1=Account1, F2=Account2, F3=Account3, F4=Account4");
     Ok(())
@@ -336,12 +324,8 @@ fn run_ffxiv_init(config_path: &PathBuf) -> Result<()> {
     println!();
     println!("Next steps:");
     println!("  1. (Optional) Edit account names in config if different");
-    println!(
-        "  2. Run `multisbox -c {config_path:?} --dry-run` to validate"
-    );
-    println!(
-        "  3. Run `multisbox -c {config_path:?}` to launch 4 FFXIV windows"
-    );
+    println!("  2. Run `multisbox -c {config_path:?} --dry-run` to validate");
+    println!("  3. Run `multisbox -c {config_path:?}` to launch 4 FFXIV windows");
     println!();
     println!("Hotkeys: F1=Account1, F2=Account2, F3=Account3, F4=Account4");
     Ok(())
@@ -370,12 +354,8 @@ fn run_eve_init(config_path: &PathBuf) -> Result<()> {
     println!();
     println!("Next steps:");
     println!("  1. (Optional) Edit account names in config if different");
-    println!(
-        "  2. Run `multisbox -c {config_path:?} --dry-run` to validate"
-    );
-    println!(
-        "  3. Run `multisbox -c {config_path:?}` to launch 4 EVE windows"
-    );
+    println!("  2. Run `multisbox -c {config_path:?} --dry-run` to validate");
+    println!("  3. Run `multisbox -c {config_path:?}` to launch 4 EVE windows");
     println!();
     println!("Hotkeys: F1=Account1, F2=Account2, F3=Account3, F4=Account4");
     Ok(())
@@ -637,9 +617,7 @@ fn run_live(config_path: &PathBuf) -> Result<()> {
         }
 
         if positioned == 0 {
-            eprintln!(
-                "ERROR: No {game_name} windows found within 30s. Is the launcher running?"
-            );
+            eprintln!("ERROR: No {game_name} windows found within 30s. Is the launcher running?");
             log::warn(&format!("No {game_name} windows found within 30s"));
         } else {
             // Second pass: keep polling for game windows by process
