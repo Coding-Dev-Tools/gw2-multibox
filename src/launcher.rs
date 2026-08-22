@@ -4,6 +4,7 @@ use crate::config::GameProfile;
 use anyhow::Result;
 use std::mem;
 use winapi::shared::minwindef::DWORD;
+use winapi::um::handleapi::CloseHandle;
 use winapi::um::processthreadsapi::{CreateProcessW, PROCESS_INFORMATION, STARTUPINFOW};
 use winapi::um::synchapi::WaitForSingleObject;
 
@@ -11,13 +12,63 @@ pub fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-pub fn build_command_line(profile: &GameProfile, extra_args: Option<&Vec<String>>) -> String {
-    let mut args_str = profile.args.join(" ");
-    if let Some(extra) = extra_args {
-        args_str.push(' ');
-        args_str.push_str(&extra.join(" "));
+/// Quote a single command-line argument using the standard Windows
+/// (MSVCRT `CommandLineToArgvW`) convention, so that arguments containing
+/// spaces, tabs or quotes survive as ONE argument instead of being split.
+///
+/// Plain arguments without whitespace or quotes are returned unchanged.
+pub fn quote_win_arg(arg: &str) -> String {
+    if !arg.is_empty() && !arg.bytes().any(|b| b == b' ' || b == b'\t' || b == b'"') {
+        return arg.to_string();
     }
+    let mut out = String::with_capacity(arg.len() + 2);
+    out.push('"');
+    let mut backslashes = 0usize;
+    for c in arg.chars() {
+        match c {
+            '\\' => backslashes += 1,
+            '"' => {
+                // Escape all pending backslashes plus the quote itself.
+                for _ in 0..(backslashes * 2 + 1) {
+                    out.push('\\');
+                }
+                out.push('"');
+                backslashes = 0;
+            }
+            _ => {
+                for _ in 0..backslashes {
+                    out.push('\\');
+                }
+                out.push(c);
+                backslashes = 0;
+            }
+        }
+    }
+    // Double any trailing backslashes so they do not escape our closing quote.
+    for _ in 0..(backslashes * 2) {
+        out.push('\\');
+    }
+    out.push('"');
+    out
+}
+
+/// Join profile args and per-account extra args into one command-line tail,
+/// quoting each argument individually. Returns an empty string when there
+/// are no arguments at all (no stray trailing space).
+fn build_args_string(args: &[String], extra: Option<&Vec<String>>) -> String {
+    let mut parts: Vec<String> = Vec::with_capacity(args.len() + extra.map_or(0, |e| e.len()));
+    parts.extend(args.iter().map(|a| quote_win_arg(a)));
+    if let Some(extra) = extra {
+        parts.extend(extra.iter().map(|a| quote_win_arg(a)));
+    }
+    parts.join(" ")
+}
+
+/// Build the full human-readable command line for a launch (also used by
+/// the dry-run output): quoted exe path followed by quoted arguments.
+pub fn build_command_line(profile: &GameProfile, extra_args: Option<&Vec<String>>) -> String {
     let exe_quoted = format!("\"{}\"", profile.exe_path);
+    let args_str = build_args_string(&profile.args, extra_args);
     if args_str.is_empty() {
         exe_quoted
     } else {
@@ -26,17 +77,18 @@ pub fn build_command_line(profile: &GameProfile, extra_args: Option<&Vec<String>
 }
 
 pub fn launch(profile: &GameProfile, extra_args: Option<&Vec<String>>) -> Result<DWORD> {
-    let mut args_str = profile.args.join(" ");
-    if let Some(extra) = extra_args {
-        args_str.push(' ');
-        args_str.push_str(&extra.join(" "));
-    }
+    let args_str = build_args_string(&profile.args, extra_args);
 
     let wide_exe = to_wide(&profile.exe_path);
+    // lpCommandLine's first token should be the quoted application path so
+    // that the child's own argv[0] parses correctly even when exe_path
+    // contains spaces (e.g. the default C:\Program Files\Guild Wars 2\
+    // install location). CreateProcessW uses lpApplicationName for the
+    // actual binary; everything else reads the raw command line.
     let wide_cmd = if args_str.is_empty() {
-        to_wide(&profile.exe_path)
+        to_wide(&format!("\"{}\"", profile.exe_path))
     } else {
-        to_wide(&format!("{} {}", profile.exe_path, args_str))
+        to_wide(&format!("\"{}\" {}", profile.exe_path, args_str))
     };
 
     let mut si: STARTUPINFOW = unsafe { mem::zeroed() };
@@ -74,8 +126,14 @@ pub fn launch(profile: &GameProfile, extra_args: Option<&Vec<String>>) -> Result
                 std::io::Error::last_os_error()
             ));
         }
-        let _ = WaitForSingleObject(pi.hProcess, 500);
         let pid = pi.dwProcessId;
+        // Best-effort: give the process a moment to initialize before we
+        // return (callers start mutex-kill / window discovery right after).
+        let _ = WaitForSingleObject(pi.hProcess, 500);
+        // Both child handles MUST be closed - previously they leaked on
+        // every launch (two handles per game instance).
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
         Ok(pid)
     }
 }
@@ -127,13 +185,52 @@ mod tests {
     }
 
     #[test]
-    fn build_command_line_empty_extra_args() {
+    fn build_command_line_empty_extra_args_no_trailing_space() {
         let profile = test_profile();
         let extra: Vec<String> = vec![];
         let cmd = build_command_line(&profile, Some(&extra));
-        // Should be same as no extra args
         assert!(cmd.starts_with(r#""C:\Games\gw2\Gw2-64.exe""#));
         assert!(cmd.contains("-autologin"));
         assert!(cmd.contains("-windowed"));
+        assert!(!cmd.ends_with(' '));
+    }
+
+    #[test]
+    fn quote_win_arg_plain_unchanged() {
+        assert_eq!(quote_win_arg("-autologin"), "-autologin");
+        assert_eq!(quote_win_arg("C:\\temp"), "C:\\temp");
+    }
+
+    #[test]
+    fn quote_win_arg_spaces_are_one_argument() {
+        assert_eq!(quote_win_arg("test map"), "\"test map\"");
+        assert_eq!(quote_win_arg(""), "\"\"");
+    }
+
+    #[test]
+    fn quote_win_arg_embedded_quotes_escaped() {
+        assert_eq!(quote_win_arg("say \"hi\""), "\"say \\\"hi\\\"\"");
+    }
+
+    #[test]
+    fn quote_win_arg_trailing_backslash_does_not_escape_closing_quote() {
+        // A literal trailing backslash must not eat the closing quote when
+        // the command line is parsed by CommandLineToArgvW. Only quoted
+        // args are affected; a bare path with no whitespace stays unquoted.
+        assert_eq!(quote_win_arg("C:\\dir"), "C:\\dir");
+        assert_eq!(quote_win_arg("C:\\my dir\\"), "\"C:\\my dir\\\\\"");
+    }
+
+    #[test]
+    fn args_with_spaces_survive_as_single_arguments() {
+        let profile = GameProfile {
+            exe_path: r"C:\Program Files\Guild Wars 2\Gw2-64.exe".into(),
+            args: vec!["-custpath".into(), r"C:\My Games\data".into()],
+            ..test_profile()
+        };
+        let cmd = build_command_line(&profile, None);
+        assert!(cmd.starts_with(r#""C:\Program Files\Guild Wars 2\Gw2-64.exe""#));
+        // The spaced value stays one quoted token, not two bare ones.
+        assert!(cmd.contains(r#""C:\My Games\data""#));
     }
 }
