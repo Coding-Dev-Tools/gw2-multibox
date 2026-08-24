@@ -127,96 +127,30 @@ fn handle_client(
                 layout: String,
             }
             match serde_json::from_str::<WizardReq>(&body) {
-                Ok(req) => {
-                    let cfg = match req.game.as_str() {
-                        "gw2" => gw2_template(),
-                        "wow" => crate::config::wow_template(),
-                        "ffxiv" => crate::config::ffxiv_template(),
-                        "eve" => crate::config::eve_template(),
-                        _ => Config::template(),
-                    };
-                    // Override account count and layout
-                    let mut new_cfg = cfg;
-                    new_cfg.accounts = (1..=req.account_count)
-                        .map(|i| crate::config::Account {
-                            name: format!("Account{}", i),
-                            game_profile: new_cfg.game_profiles[0].name.clone(),
-                            extra_args: None,
-                        })
-                        .collect();
-                    // Layout adjustment
-                    if req.layout == "single" {
-                        new_cfg.layout = crate::config::Layout {
-                            name: "single".to_string(),
-                            regions: vec![crate::config::Region {
-                                name: "fullscreen".to_string(),
-                                x: 0,
-                                y: 0,
-                                width: 1920,
-                                height: 1080,
-                            }],
-                        };
-                        new_cfg.team.slots = vec![crate::config::Slot {
-                            index: 1,
-                            account: "Account1".to_string(),
-                            region: "fullscreen".to_string(),
-                        }];
-                    } else if req.layout == "grid1x4" {
-                        let mon_w = new_cfg.layout.regions[0].width * 4;
-                        let mon_h = new_cfg.layout.regions[0].height;
-                        new_cfg.layout.regions = (0..4)
-                            .map(|i| crate::config::Region {
-                                name: format!("r{}", i + 1),
-                                x: i * mon_w / 4,
-                                y: 0,
-                                width: mon_w / 4,
-                                height: mon_h,
-                            })
-                            .collect();
-                        new_cfg.team.slots = (0..4)
-                            .map(|i| crate::config::Slot {
-                                index: i + 1,
-                                account: format!("Account{}", i + 1),
-                                region: format!("r{}", i + 1),
-                            })
-                            .collect();
-                    } else if req.layout == "grid4x1" {
-                        let mon_w = new_cfg.layout.regions[0].width;
-                        let mon_h = new_cfg.layout.regions[0].height * 4;
-                        new_cfg.layout.regions = (0..4)
-                            .map(|i| crate::config::Region {
-                                name: format!("r{}", i + 1),
-                                x: 0,
-                                y: i * mon_h / 4,
-                                width: mon_w,
-                                height: mon_h / 4,
-                            })
-                            .collect();
-                        new_cfg.team.slots = (0..4)
-                            .map(|i| crate::config::Slot {
-                                index: i + 1,
-                                account: format!("Account{}", i + 1),
-                                region: format!("r{}", i + 1),
-                            })
-                            .collect();
+                Ok(req) => match build_wizard_config(&req.game, req.account_count, &req.layout) {
+                    Ok(new_cfg) => {
+                        // Save and respond
+                        if let Err(e) = crate::config::resolve(&new_cfg) {
+                            let resp = error_body(&e.to_string());
+                            respond_json(&mut stream, 400, &resp)?;
+                        } else if let Err(e) = new_cfg.save(&config_path) {
+                            let resp = error_body(&e.to_string());
+                            respond_json(&mut stream, 500, &resp)?;
+                        } else {
+                            let mut guard = state.lock().unwrap();
+                            guard.config = new_cfg.clone();
+                            guard.last_error = None;
+                            let body = serde_json::to_string(
+                                &serde_json::json!({"ok": true, "config": new_cfg}),
+                            )?;
+                            respond_json(&mut stream, 200, &body)?;
+                        }
                     }
-                    // Save and respond
-                    if let Err(e) = crate::config::resolve(&new_cfg) {
-                        let resp = error_body(&e.to_string());
+                    Err(msg) => {
+                        let resp = error_body(&msg);
                         respond_json(&mut stream, 400, &resp)?;
-                    } else if let Err(e) = new_cfg.save(&config_path) {
-                        let resp = error_body(&e.to_string());
-                        respond_json(&mut stream, 500, &resp)?;
-                    } else {
-                        let mut guard = state.lock().unwrap();
-                        guard.config = new_cfg.clone();
-                        guard.last_error = None;
-                        let body = serde_json::to_string(
-                            &serde_json::json!({"ok": true, "config": new_cfg}),
-                        )?;
-                        respond_json(&mut stream, 200, &body)?;
                     }
-                }
+                },
                 Err(e) => {
                     let resp = error_body(&e.to_string());
                     respond_json(&mut stream, 400, &resp)?;
@@ -251,6 +185,116 @@ fn handle_client(
     }
 
     Ok(())
+}
+
+/// Build a starter config from wizard parameters. Pure so the slot/layout
+/// arithmetic is unit-testable without spawning HTTP handlers or Windows APIs.
+///
+/// Fixes two wizard bugs:
+/// - grid layouts used to always emit 4 team slots, so any request with
+///   fewer than 4 accounts failed `resolve()` with "unknown account";
+///   grid cell count now clamps to `account_count`.
+/// - unknown layout names were silently ignored (the game template's
+///   default layout shipped unmodified); they are now rejected with 400.
+pub(crate) fn build_wizard_config(
+    game: &str,
+    account_count: usize,
+    layout: &str,
+) -> std::result::Result<Config, String> {
+    const MAX_ACCOUNTS: usize = 16;
+    if account_count == 0 {
+        return Err("account_count must be at least 1".to_string());
+    }
+    if account_count > MAX_ACCOUNTS {
+        return Err(format!(
+            "account_count must be at most {} (got {})",
+            MAX_ACCOUNTS, account_count
+        ));
+    }
+
+    let mut cfg = match game {
+        "gw2" => gw2_template(),
+        "wow" => crate::config::wow_template(),
+        "ffxiv" => crate::config::ffxiv_template(),
+        "eve" => crate::config::eve_template(),
+        _ => Config::template(),
+    };
+
+    cfg.accounts = (1..=account_count)
+        .map(|i| crate::config::Account {
+            name: format!("Account{}", i),
+            game_profile: cfg.game_profiles[0].name.clone(),
+            extra_args: None,
+        })
+        .collect();
+
+    let make_slot = |i: usize, region: &str| crate::config::Slot {
+        index: i,
+        account: format!("Account{}", i),
+        region: region.to_string(),
+    };
+
+    match layout {
+        "single" => {
+            cfg.layout = crate::config::Layout {
+                name: "single".to_string(),
+                regions: vec![crate::config::Region {
+                    name: "fullscreen".to_string(),
+                    x: 0,
+                    y: 0,
+                    width: 1920,
+                    height: 1080,
+                }],
+            };
+            cfg.team.slots = vec![make_slot(1, "fullscreen")];
+        }
+        "grid1x4" | "grid4x1" => {
+            let base = cfg
+                .layout
+                .regions
+                .first()
+                .ok_or_else(|| "game template has no layout regions".to_string())?
+                .clone();
+            let horizontal = layout == "grid1x4";
+            let n = account_count;
+            cfg.layout.regions = (0..n)
+                .map(|i| {
+                    let (x, y, w, h) = if horizontal {
+                        (
+                            ((i * base.width as usize) / n) as i32,
+                            0,
+                            (base.width as usize / n).max(1) as i32,
+                            base.height,
+                        )
+                    } else {
+                        (
+                            0,
+                            ((i * base.height as usize) / n) as i32,
+                            base.width,
+                            (base.height as usize / n).max(1) as i32,
+                        )
+                    };
+                    crate::config::Region {
+                        name: format!("r{}", i + 1),
+                        x,
+                        y,
+                        width: w,
+                        height: h,
+                    }
+                })
+                .collect();
+            cfg.team.slots = (0..n)
+                .map(|i| make_slot(i + 1, &format!("r{}", i + 1)))
+                .collect();
+        }
+        other => {
+            return Err(format!(
+                "unknown layout '{}' (expected single, grid1x4 or grid4x1)",
+                other
+            ));
+        }
+    }
+    Ok(cfg)
 }
 
 /// Build a JSON error-response body, properly escaping `msg` so that
@@ -310,5 +354,47 @@ mod tests {
         let msg = "Slot 2 references unknown account 'Acct\"X'";
         let v: serde_json::Value = serde_json::from_str(&error_body(msg)).unwrap();
         assert_eq!(v["error"].as_str().unwrap(), msg);
+    }
+
+    #[test]
+    fn wizard_grid_clamps_slots_to_account_count() {
+        // Regression: grid layouts used to emit 4 slots even for 2 accounts,
+        // making resolve() fail with "unknown account".
+        for layout in ["grid1x4", "grid4x1"] {
+            let cfg = build_wizard_config("gw2", 2, layout).expect("wizard config");
+            assert_eq!(cfg.accounts.len(), 2);
+            assert_eq!(cfg.team.slots.len(), 2);
+            assert_eq!(cfg.layout.regions.len(), 2);
+            crate::config::resolve(&cfg).expect("clamped wizard config must validate");
+        }
+    }
+
+    #[test]
+    fn wizard_single_layout_validates_for_one_account() {
+        let cfg = build_wizard_config("gw2", 1, "single").expect("wizard config");
+        assert_eq!(cfg.team.slots.len(), 1);
+        crate::config::resolve(&cfg).expect("single wizard config must validate");
+    }
+
+    #[test]
+    fn wizard_rejects_zero_and_oversized_account_counts() {
+        assert!(build_wizard_config("gw2", 0, "single").is_err());
+        assert!(build_wizard_config("gw2", 17, "single").is_err());
+    }
+
+    #[test]
+    fn wizard_rejects_unknown_layout() {
+        // Regression: unknown layouts were silently ignored.
+        let err = build_wizard_config("gw2", 3, "diagonal").unwrap_err();
+        assert!(err.contains("unknown layout"), "got: {}", err);
+    }
+
+    #[test]
+    fn all_known_game_templates_build_valid_wizard_configs() {
+        for game in ["gw2", "wow", "ffxiv", "eve", "mystery-game"] {
+            let cfg = build_wizard_config(game, 3, "grid1x4")
+                .unwrap_or_else(|e| panic!("{}: {}", game, e));
+            crate::config::resolve(&cfg).unwrap_or_else(|e| panic!("{}: {}", game, e));
+        }
     }
 }

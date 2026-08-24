@@ -1,6 +1,14 @@
-﻿# Changelog
+# Changelog
 
 ## [Unreleased]
+
+### Fixed
+- Config wizard (`/api/wizard/create`): grid layouts (grid1x4 / grid4x1)
+  no longer emit 4 team slots regardless of `account_count`; the cell
+  count now matches the requested account count, so 1-3 account wizard
+  requests validate and save instead of failing with "unknown account".
+- Config wizard: unknown layout names are now rejected with a 400 error
+  instead of being silently ignored.
 
 ### Added
 - Input Broadcasting (keyboard only, ENABLED by default, F9 toggle)
