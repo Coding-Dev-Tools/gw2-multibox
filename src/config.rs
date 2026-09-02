@@ -312,6 +312,37 @@ pub fn resolve(config: &Config) -> Result<ResolvedConfig<'_>> {
         }
     }
 
+    // Validate named_layouts: duplicate names or invalid regions
+    // surface silently in the web UI if unchecked here.
+    let mut seen_layout_names: HashSet<&str> = HashSet::new();
+    for layout in &config.named_layouts {
+        if !seen_layout_names.insert(layout.name.as_str()) {
+            return Err(anyhow::anyhow!(
+                "Duplicate named layout name: '{}'",
+                layout.name
+            ));
+        }
+        let mut seen_region_names: HashSet<&str> = HashSet::new();
+        for r in &layout.regions {
+            if r.width <= 0 || r.height <= 0 {
+                return Err(anyhow::anyhow!(
+                    "Named layout '{}': region '{}' has non-positive size ({}x{})",
+                    layout.name,
+                    r.name,
+                    r.width,
+                    r.height
+                ));
+            }
+            if !seen_region_names.insert(r.name.as_str()) {
+                return Err(anyhow::anyhow!(
+                    "Named layout '{}': duplicate region name '{}'",
+                    layout.name,
+                    r.name
+                ));
+            }
+        }
+    }
+
     // A team with no slots resolves "successfully" but launches nothing —
     // a silent no-op. Treat it as a configuration error so it surfaces early.
     if config.team.slots.is_empty() {
@@ -1419,5 +1450,97 @@ broadcast:
         assert_eq!(cfg.layout.regions.len(), 1);
         assert_eq!(cfg.layout.regions[0].name, "swap-auto");
         assert_eq!(cfg.team.slots.len(), 4);
+    }
+
+    #[test]
+    fn resolve_named_layout_duplicate_name_fails() {
+        let mut cfg = minimal_config();
+        cfg.named_layouts.push(Layout {
+            name: "my-layout".to_string(),
+            regions: vec![Region {
+                name: "r1".to_string(),
+                x: 0,
+                y: 0,
+                width: 960,
+                height: 540,
+            }],
+        });
+        cfg.named_layouts.push(Layout {
+            name: "my-layout".to_string(),
+            regions: vec![Region {
+                name: "r2".to_string(),
+                x: 0,
+                y: 0,
+                width: 960,
+                height: 540,
+            }],
+        });
+        assert!(resolve(&cfg).is_err());
+        if let Err(e) = resolve(&cfg) {
+            assert!(e.to_string().contains("Duplicate named layout name"), "got: {e}");
+        }
+    }
+
+    #[test]
+    fn resolve_named_layout_zero_size_region_fails() {
+        let mut cfg = minimal_config();
+        cfg.named_layouts.push(Layout {
+            name: "bad".to_string(),
+            regions: vec![Region {
+                name: "r1".to_string(),
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 540,
+            }],
+        });
+        assert!(resolve(&cfg).is_err());
+        if let Err(e) = resolve(&cfg) {
+            assert!(e.to_string().contains("non-positive size"), "got: {e}");
+        }
+    }
+
+    #[test]
+    fn resolve_named_layout_duplicate_region_name_fails() {
+        let mut cfg = minimal_config();
+        cfg.named_layouts.push(Layout {
+            name: "my-layout".to_string(),
+            regions: vec![
+                Region {
+                    name: "r1".to_string(),
+                    x: 0,
+                    y: 0,
+                    width: 960,
+                    height: 540,
+                },
+                Region {
+                    name: "r1".to_string(),
+                    x: 0,
+                    y: 0,
+                    width: 960,
+                    height: 540,
+                },
+            ],
+        });
+        assert!(resolve(&cfg).is_err());
+        if let Err(e) = resolve(&cfg) {
+            assert!(e.to_string().contains("duplicate region name"), "got: {e}");
+        }
+    }
+
+    #[test]
+    fn resolve_valid_named_layout_passes() {
+        let mut cfg = minimal_config();
+        cfg.named_layouts.push(Layout {
+            name: "my-layout".to_string(),
+            regions: vec![Region {
+                name: "r1".to_string(),
+                x: 0,
+                y: 0,
+                width: 960,
+                height: 540,
+            }],
+        });
+        assert!(resolve(&cfg).is_ok());
     }
 }

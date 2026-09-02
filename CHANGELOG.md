@@ -8,6 +8,9 @@
   count now matches the requested account count, so 1-3 account wizard
   requests validate and save instead of failing with "unknown account".
 - Config wizard: unknown layout names are now rejected with a 400 error
+- `config::resolve()`: validates `named_layouts` for duplicate layout
+  names, non-positive region sizes, and duplicate region names within
+  a layout instead of silently accepting them; +4 regression tests.
   instead of being silently ignored.
 
 ### Added
