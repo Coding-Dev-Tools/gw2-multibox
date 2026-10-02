@@ -128,7 +128,12 @@ impl BroadcastManager {
 
         unsafe {
             if let Some(hook) = self.hook.take() {
-                UnhookWindowsHookEx(hook);
+                if UnhookWindowsHookEx(hook) == 0 {
+                    return Err(anyhow::anyhow!(
+                        "Failed to uninstall keyboard hook (error {})",
+                        std::io::Error::last_os_error()
+                    ));
+                }
                 *STATE.hook.get() = std::ptr::null_mut();
             }
         }
@@ -228,7 +233,9 @@ impl BroadcastManager {
 
 impl Drop for BroadcastManager {
     fn drop(&mut self) {
-        let _ = self.disable();
+        if let Err(e) = self.disable() {
+            crate::log::warn(&format!("Failed to disable broadcasting on drop: {}", e));
+        }
     }
 }
 
