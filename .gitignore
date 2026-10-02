@@ -94,3 +94,5 @@ WORK/
 # Local env and legacy bootstrap artifacts
 .env
 script/bootstrap/
+
+.gw2-mtx-worktree/
