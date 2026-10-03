@@ -1477,7 +1477,10 @@ broadcast:
         });
         assert!(resolve(&cfg).is_err());
         if let Err(e) = resolve(&cfg) {
-            assert!(e.to_string().contains("Duplicate named layout name"), "got: {e}");
+            assert!(
+                e.to_string().contains("Duplicate named layout name"),
+                "got: {e}"
+            );
         }
     }
 
